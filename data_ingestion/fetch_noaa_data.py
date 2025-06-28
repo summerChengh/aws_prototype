@@ -16,7 +16,7 @@ import subprocess
 import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from openaq_utils import fetch_openaq_location_ids, get_location_by_id
-from utils import get_years_from_time_range, load_csv_file
+from utils import *
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -339,7 +339,7 @@ def get_noaa_locations_info(file_path, stations_file="data/noaa-gsod-pds/station
     return df
 
 
-def get_openaq_stations(stations_file="data/noaa-gsod-pds/stations_file.csv", station_location_file="data/noaa-openaq-mapping.csv", api_key=None, radius_m=10000):
+def get_openaq_stations(stations_file="data/noaa-gsod-pds/stations_file.csv", station_location_file="data/noaa-openaq-mapping.csv", api_key=None, radius_m=16100):
     """
     将NOAA站点与OpenAQ监测站点进行映射
     

@@ -10,8 +10,8 @@ from fetch_openaq_data import process_aq_data_and_extract_features
 from cal_aqi import AQICalculator
 
 # 指定时间范围，城市采样比例
-start_date = "2024-01-01"  # 格式为 'YYYY-MM-DD'，用于NOAA数据
-end_date = "2024-01-31"    # 格式为 'YYYY-MM-DD'，用于NOAA数据
+start_date = "2016-12-01"  # 格式为 'YYYY-MM-DD'，用于NOAA数据
+end_date = "2016-12-30"    # 格式为 'YYYY-MM-DD'，用于NOAA数据
 sample_rate = 0.001
 
 # 为OpenAQ数据转换日期格式
@@ -26,27 +26,38 @@ os.makedirs(output_dir, exist_ok=True)
 years = get_years_from_time_range(start_date, end_date)
 #station_ids = get_noaa_location_ids(years)
 
-# 采样nooa locations
+# 采样nooa locations, 随机采样可能采样不到污染数据，加入污染数据
+
 # 确保采样数量至少为1
 #sample_size = max(1, int(len(station_ids) * sample_rate))
 #sampled_stations = random.sample(station_ids, sample_size)
 #print(f"采样了 {sample_size} 个站点，从总共 {len(station_ids)} 个站点中")
 
 # 获取指定时间范围所有的nooa数据
-#nooa_df = getNoaaDataFrame(sampled_stations, start_date, end_date)
+sampled_stations = ["72384023155", "72389093193", "72389693144", "72494693232",
+ "72287493134", "72278023183", "70261026411", "41640099999"]
 nooa_file = f"{output_dir}/nooa.csv"
-#nooa_df.to_csv(nooa_file, index=False)
-nooa_df = pd.read_csv(nooa_file)
-print(f"已保存NOAA数据到: {nooa_file}")
+if os.path.exists(nooa_file):
+    nooa_df = pd.read_csv(nooa_file)
+    print(f"NOAA数据文件已存在，已加载: {nooa_file}")
+else:
+    nooa_df = getNoaaDataFrame(sampled_stations, start_date, end_date)
+    nooa_df.to_csv(nooa_file, index=False)
+    print(f"NOAA数据文件不存在，已生成并保存: {nooa_file}")
+
+
 
 # 从DataFrame中获取stations经纬度信息
 stations_file = f"{output_dir}/nooa_stations_file.csv"
-#get_stations_info_from_df(nooa_df, stations_file)
-print(f"已保存站点信息到: {stations_file}")
+if not os.path.exists(stations_file):
+    get_stations_info_from_df(nooa_df, stations_file)
+    print(f"已保存站点信息到: {stations_file}")
+
 
 # 采样后的nooa locations获取最近的openaq location ids
-station_location_file = f"{output_dir}/noaa-openaq-mapping_test.csv"
-#get_openaq_stations(stations_file, station_location_file, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
+station_location_file = f"{output_dir}/noaa-openaq-mapping.csv"
+if not os.path.exists(station_location_file):
+    get_openaq_stations(stations_file, station_location_file, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
 
 # 获取openaq locations ids指定时间范围的数据，并计算污染物指标
 # 加载station_location_file，获取所有不重复的OPENAQ_ID
@@ -65,12 +76,12 @@ for id in unique_openaq_ids:
         end_date=end_date_openaq,       # 使用转换后的日期格式
         download_missing=True
     )
-    print("merged_aq_df columns:", merged_aq_df.columns.tolist())
-    print("processed_df columns:", processed_df.columns.tolist())
+    
     if processed_df is not None and not processed_df.empty:
         # 增加id列以便区分
         processed_df['OPENAQ_ID'] = id
         all_processed_dfs.append(processed_df)
+        print(processed_df)
 if all_processed_dfs:
     merged_df = pd.concat(all_processed_dfs, ignore_index=True)
     merged_file = f"{output_dir}/all_openaq_processed.csv"
@@ -85,7 +96,6 @@ calculator = AQICalculator()
 
 # 读取合并后的数据
 merged_file = f"{output_dir}/all_openaq_processed.csv"
-merged_df = pd.read_csv(merged_file)
 
 # 创建用于存储单个污染物AQI的列
 pollutants = {
@@ -117,7 +127,7 @@ def calculate_row_aqi(row):
 
 # 应用函数到每一行
 aqi_results = merged_df.apply(calculate_row_aqi, axis=1)
-print(aqi_results)
+print(f"aqi_results: {aqi_results}")
 # 提取综合AQI和主要污染物
 merged_df['AQI'] = [result[0] if result else None for result in aqi_results]
 merged_df['main_pollutant'] = [result[1] if result else None for result in aqi_results]
@@ -144,9 +154,9 @@ print(f"已计算AQI并保存到: {aqi_file}")
 
 # 将nooa_df和merged_df进行左连接，使用mapping_df中的STATION和OPENAQ_ID字段的对应关系
 print(merged_df.columns)
-feats = ["location_id", "date", "location", "lat", "lon", "O3_aqi", "SO2_aqi", "PM2.5_24h_aqi", "PM10_24h_aqi",
- "CO_8h_aqi", "NO2_1h_aqi", "AQI", 'main_pollutant', "OPENAQ_ID"]
-merged_df = merged_df[feats]
+#feats = ["location_id", "date", "location", "lat", "lon", "O3_aqi", "SO2_aqi", "PM2.5_24h_aqi", "PM10_24h_aqi",
+# "CO_8h_aqi", "NO2_1h_aqi", "AQI", 'main_pollutant', "OPENAQ_ID"]
+#merged_df = merged_df[feats]
 # 1. 先将mapping_df中的STATION和OPENAQ_ID作为桥接
 # 2. nooa_df中应有STATION字段，merged_df中有OPENAQ_ID字段
 # 确保字段名一致
@@ -162,8 +172,6 @@ mapping_bridge = mapping_df[['STATION', 'OPENAQ_ID']].dropna()
 # 先将nooa_df和mapping_df左连接，获得OPENAQ_ID
 nooa_with_openaq = pd.merge(nooa_df_merged, mapping_bridge, on='STATION', how='left')
 
-# 再与merged_df左连接，on OPENAQ_ID 和时间字段（如有需要可加时间对齐，这里只按OPENAQ_ID连接）
-# 如果需要按时间对齐，可以加上时间字段，比如 'datetime' 或 'date'
 # 这里仅按OPENAQ_ID左连接，保留nooa数据的所有行
 final_merged = pd.merge(nooa_with_openaq, merged_df, on='OPENAQ_ID', how='left', suffixes=('_nooa', '_openaq'))
 print(final_merged.columns)

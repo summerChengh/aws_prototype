@@ -4,6 +4,7 @@ import numpy as np
 import argparse
 import os
 from typing import List, Dict, Optional, Union, Any
+from utils import get_years_from_time_range
 
 
 def fetch_openaq_location_ids(lat, lng, api_key=None, radius_m=10000, limit=10):
@@ -100,13 +101,289 @@ def get_location_by_id(location_id: str, api_key: Optional[str] = None) -> Dict[
         print(f"获取监测站点信息时出错: {str(e)}")
         return {}
 
+def get_sensors_by_location_id(location_id: str, api_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    获取指定位置ID的传感器列表
+    
+    参数:
+    location_id (str): OpenAQ监测站点ID
+    api_key (str, optional): OpenAQ API密钥
+    
+    返回:
+    Dict[str, Any]: 包含传感器信息的字典，如果获取失败则返回空字典
+    """
+    # OpenAQ API v3基础URL
+    aq_reqUrlBase = "https://api.openaq.org/v3"
+    
+    # 设置请求头，包含API Key
+    headers = {}
+    if api_key:
+        headers['X-API-Key'] = api_key
+    
+    try:
+        # 调用locations/{location_id}/sensors端点获取传感器信息
+        endpoint = f"{aq_reqUrlBase}/locations/{location_id}/sensors"
+        print(f"请求URL: {endpoint}")
+        
+        resp = requests.get(endpoint, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # 调试输出
+        print(f"API响应状态码: {resp.status_code}")
+        
+        # 返回结果数据
+        if 'results' in data and len(data['results']) > 0:
+            print(f"找到{len(data['results'])}个传感器")
+            return data
+        else:
+            print(f"未找到ID为{location_id}的监测站点的传感器")
+            return {"results": []}
+    except requests.exceptions.HTTPError as e:
+        print(f"API请求错误: {e}")
+        if resp.status_code == 401:
+            print("认证失败: 请提供有效的API Key")
+        elif resp.status_code == 403:
+            print("权限不足: 请检查API Key权限")
+        elif resp.status_code == 404:
+            print(f"监测站点不存在: ID {location_id} 未找到")
+        return {"results": []}
+    except Exception as e:
+        print(f"获取传感器信息时出错: {str(e)}")
+        return {"results": []}
+
+def get_measurements_by_sensor_id(sensor_id: int, datetime_from: Optional[str] = None, 
+                             datetime_to: Optional[str] = None, limit: int = 100, 
+                             page: int = 1, api_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    获取传感器按小时到日期的聚合测量数据
+    
+    参数:
+    sensor_id (int): 传感器ID
+    datetime_from (str, optional): 开始日期时间，格式为'YYYY-MM-DD'
+    datetime_to (str, optional): 结束日期时间，格式为'YYYY-MM-DD'
+    limit (int, optional): 返回结果数量限制，默认100
+    page (int, optional): 分页页码，默认1
+    api_key (str, optional): OpenAQ API密钥
+    
+    返回:
+    Dict[str, Any]: 包含传感器测量数据的字典，如果获取失败则返回空字典
+    """
+    # OpenAQ API v3基础URL
+    aq_reqUrlBase = "https://api.openaq.org/v3"
+    
+    # 确保sensor_id是整数
+    try:
+        sensor_id = int(sensor_id)
+    except (ValueError, TypeError):
+        print(f"错误: sensor_id必须是整数，收到的值为: {sensor_id}")
+        return {"results": []}
+    
+    # 设置请求头，包含API Key
+    headers = {}
+    if api_key:
+        headers['X-API-Key'] = api_key
+    
+    # 构建查询参数
+    params = {
+        'limit': limit,
+        'page': page
+    }
+    
+    # 添加可选的日期时间参数
+    if datetime_from:
+        params['datetime_from'] = datetime_from
+    if datetime_to:
+        params['datetime_to'] = datetime_to
+    
+    try:
+        # 调用sensors/{sensor_id}/hours/daily端点获取数据
+        endpoint = f"{aq_reqUrlBase}/sensors/{sensor_id}/hours/daily"
+        print(f"请求URL: {endpoint}")
+        print(f"参数: {params}")
+        
+        resp = requests.get(endpoint, params=params, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # 调试输出
+        print(f"API响应状态码: {resp.status_code}")
+        
+        # 返回结果数据
+        if 'results' in data and len(data['results']) > 0:
+            print(f"找到{len(data['results'])}条测量记录")
+            return data
+        else:
+            print(f"未找到ID为{sensor_id}的传感器测量数据")
+            return {"results": []}
+    except requests.exceptions.HTTPError as e:
+        print(f"API请求错误: {e}")
+        if hasattr(resp, 'status_code'):
+            if resp.status_code == 401:
+                print("认证失败: 请提供有效的API Key")
+            elif resp.status_code == 403:
+                print("权限不足: 请检查API Key权限")
+            elif resp.status_code == 404:
+                print(f"传感器不存在: ID {sensor_id} 未找到")
+        return {"results": []}
+    except Exception as e:
+        print(f"获取传感器测量数据时出错: {str(e)}")
+        return {"results": []}
+
+def get_latest_measurements_by_location(location_id: int, limit: int = 100, page: int = 1, 
+                                   datetime_min: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    获取指定位置的最新测量数据
+    
+    参数:
+    location_id (int): 位置ID
+    limit (int, optional): 返回结果数量限制，默认100
+    page (int, optional): 分页页码，默认1
+    datetime_min (str, optional): 最小日期时间，格式为'YYYY-MM-DDThh:mm:ss'
+    api_key (str, optional): OpenAQ API密钥
+    
+    返回:
+    Dict[str, Any]: 包含位置最新测量数据的字典，如果获取失败则返回空字典
+    """
+    # OpenAQ API v3基础URL
+    aq_reqUrlBase = "https://api.openaq.org/v3"
+    
+    # 确保location_id是整数
+    try:
+        location_id = int(location_id)
+    except (ValueError, TypeError):
+        print(f"错误: location_id必须是整数，收到的值为: {location_id}")
+        return {"results": []}
+    
+    # 设置请求头，包含API Key
+    headers = {}
+    if api_key:
+        headers['X-API-Key'] = api_key
+    
+    # 构建查询参数
+    params = {
+        'limit': limit,
+        'page': page
+    }
+    
+    # 添加可选的最小日期时间参数
+    if datetime_min:
+        params['datetime_min'] = datetime_min
+    
+    try:
+        # 调用locations/{location_id}/latest端点获取数据
+        endpoint = f"{aq_reqUrlBase}/locations/{location_id}/latest"
+        print(f"请求URL: {endpoint}")
+        print(f"参数: {params}")
+        
+        resp = requests.get(endpoint, params=params, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # 调试输出
+        print(f"API响应状态码: {resp.status_code}")
+        
+        # 返回结果数据
+        if 'results' in data and len(data['results']) > 0:
+            print(f"找到{len(data['results'])}条最新测量记录")
+            return data
+        else:
+            print(f"未找到ID为{location_id}的位置的最新测量数据")
+            return {"results": []}
+    except requests.exceptions.HTTPError as e:
+        print(f"API请求错误: {e}")
+        if hasattr(resp, 'status_code'):
+            if resp.status_code == 401:
+                print("认证失败: 请提供有效的API Key")
+            elif resp.status_code == 403:
+                print("权限不足: 请检查API Key权限")
+            elif resp.status_code == 404:
+                print(f"位置不存在: ID {location_id} 未找到")
+        return {"results": []}
+    except Exception as e:
+        print(f"获取位置最新测量数据时出错: {str(e)}")
+        return {"results": []}
+
 
 if __name__=='__main__':
    # 测试获取监测站点ID
-   ids = fetch_openaq_location_ids(35.43, -119.01, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
-   print(f"找到的监测站点IDs: {ids}")
+ #  ids = fetch_openaq_location_ids(35.43, -119.01, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
+ #  print(f"找到的监测站点IDs: {ids}")
    
-   # 如果找到了监测站点，测试获取第一个监测站点的详细信息
+   end_date = "2024-03-12"
+   start_date = "2024-03-12"
+   # 测试获取传感器信息
+   location_id = "6868"
+   sensors_data = get_sensors_by_location_id(location_id, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
+   print(f"\n位置ID {location_id} 的传感器信息:")
+   
+   # 存储找到的第一个传感器ID用于测试
+   first_sensor_id = None
+   
+   if 'results' in sensors_data and sensors_data['results']:
+       for i, sensor in enumerate(sensors_data['results']):
+           print(f"\n传感器 #{i+1}:")
+           sensor_id = sensor.get('id', 'N/A')
+           print(f"ID: {sensor_id}")
+           print(f"参数: {sensor.get('parameter', 'N/A')}")
+           print(f"类型: {sensor.get('sensor_type', 'N/A')}")
+           if 'last_value' in sensor:
+               print(f"最新值: {sensor['last_value']} {sensor.get('unit', '')}")
+               print(f"最后更新时间: {sensor.get('last_updated', 'N/A')}")
+               
+               # 保存第一个传感器ID用于测试
+               if i == 0 and sensor_id != 'N/A':
+                   first_sensor_id = sensor_id
+   else:
+       print("未找到传感器数据")
+   
+   first_sensor_id = 1662909
+   # 如果找到了传感器ID，测试获取该传感器的测量数据
+   for first_sensor_id in [1662909]:
+       print(f"\n测试获取传感器 {first_sensor_id} 的年度聚合数据:")
+       
+       measurements = get_measurements_by_sensor_id(
+           first_sensor_id, 
+           datetime_from=start_date,
+           datetime_to=end_date,
+           limit=100,
+           api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00"
+       )
+       print(measurements)
+       
+       if 'results' in measurements and measurements['results']:
+           print(f"找到 {len(measurements['results'])} 条年度聚合记录")
+           for i, record in enumerate(measurements['results'][:3]):  # 只显示前3条记录
+               print(f"\n记录 #{i+1}:")
+               print(f"日期: {record.get('day', 'N/A')}")
+               print(f"平均值: {record.get('average', 'N/A')}")
+               print(f"最小值: {record.get('minimum', 'N/A')}")
+               print(f"最大值: {record.get('maximum', 'N/A')}")
+       else:
+           print("未找到测量数据")
+   
+   # 测试获取位置的最新测量数据
+   print("\n测试获取位置的最新测量数据:")
+   location_ids = [6868]  # 示例位置ID
+   
+   for loc_id in location_ids:
+       print(f"\n获取位置ID {loc_id} 的最新测量数据:")
+       latest_data = get_latest_measurements_by_location(
+           loc_id,
+           limit=10,
+           api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00"
+       )
+       if 'results' in latest_data and latest_data['results']:
+           print(f"找到 {len(latest_data['results'])} 条最新测量记录")
+           for i, measurement in enumerate(latest_data['results'][:3]):  # 只显示前3条记录
+               print(f"\n测量 #{i+1}:")
+               print(f"sensorsId: {measurement.get('sensorsId', 'N/A')}")
+               print(f"值: {measurement.get('value', 'N/A')} {measurement.get('unit', '')}")
+               print(f"日期时间: {measurement.get('datetime', {}).get('utc', 'N/A')}")
+       else:
+           print("未找到最新测量数据")
+   
+   ids = []
    if ids:
     for id in ids:
        location_info = get_location_by_id(id, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")

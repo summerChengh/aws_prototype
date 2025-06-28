@@ -11,7 +11,7 @@ import gzip
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta, date
-from utils import load_csv_file
+from utils import load_csv_file, find_data_files, preprocess_datetime_column, sort_by_datetime, load_and_merge_data_files, perform_time_resampling
 # 导入OpenAQProcessor类
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_ingestion.openaq_feats import OpenAQProcessor
@@ -122,7 +122,16 @@ def download_data_from_s3(location_id, data_dir, start_date, end_date):
                 
                 # 构建S3路径和本地路径
                 s3_file = f"s3://openaq-data-archive/records/csv.gz/locationid={location_id}/year={year_str}/month={month_str}/{file_name}"
-                
+                # 检查S3文件是否存在
+                check_cmd = [
+                    "aws", "s3", "ls",
+                    "--no-sign-request",
+                    s3_file
+                ]
+                check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+                if check_result.returncode != 0 or not check_result.stdout.strip():
+                    print(f"S3文件不存在，跳过: {s3_file}")
+                    continue
                 print(f"正在从S3下载文件: {s3_file} -> {local_file}")
                 
                 # 执行AWS CLI命令下载单个文件
@@ -149,254 +158,135 @@ def download_data_from_s3(location_id, data_dir, start_date, end_date):
         print(f"下载数据时出错: {e}")
         return False
 
-def find_data_files(base_dir, location_id, start_date=None, end_date=None):
+
+def fetch_data_from_s3_by_year(location_id, data_dir, year, check_existing=True):
     """
-    根据日期范围查找指定位置ID的数据文件
+    从AWS S3按年下载数据文件
     
     参数:
-    base_dir (str): 数据根目录
     location_id (str): 位置ID
-    start_date (str, optional): 起始日期，格式为YYYYMMDD
-    end_date (str, optional): 结束日期，格式为YYYYMMDD
+    data_dir (str): 本地数据目录
+    year (int): 年份，如2024
+    check_existing (bool): 是否检查已存在的文件，默认True
     
     返回:
-    list: 匹配条件的文件路径列表
+    tuple: (是否成功下载数据, 下载的文件列表)
     """
-    # 解析起始和结束日期
-    if start_date:
-        start_dt = datetime.strptime(start_date, '%Y%m%d')
-    else:
-        start_dt = datetime(1900, 1, 1)  # 默认非常早的日期
+    try:
+        # 格式化年份
+        year_str = str(year)
         
-    if end_date:
-        end_dt = datetime.strptime(end_date, '%Y%m%d')
-    else:
-        end_dt = datetime.now()  # 默认当前日期
-    
-    # 构建位置ID目录路径
-    location_dir = os.path.join(base_dir, f"locationid={location_id}")
-    
-    if not os.path.exists(location_dir):
-        print(f"位置ID目录不存在: {location_dir}")
-        return []
-    
-    # 查找所有年份目录
-    year_dirs = [d for d in os.listdir(location_dir) if d.startswith('year=')]
-    
-    all_files = []
-    
-    for year_dir in sorted(year_dirs):
-        year = year_dir.split('=')[1]
-        year_path = os.path.join(location_dir, year_dir)
+        # 确保本地目录存在
+        location_dir = os.path.join(data_dir, f"locationid={location_id}/year={year_str}")
+        os.makedirs(location_dir, exist_ok=True)
         
-        # 查找所有月份目录
-        month_dirs = [d for d in os.listdir(year_path) if d.startswith('month=')]
+        # 构建S3路径
+        s3_base_path = f"s3://openaq-data-archive/records/csv.gz/locationid={location_id}/year={year_str}/"
         
-        for month_dir in sorted(month_dirs):
-            month = month_dir.split('=')[1]
-            month_path = os.path.join(year_path, month_dir)
+        print(f"正在从S3获取 {year_str} 年的月份列表...")
+        
+        # 获取所有月份目录
+        list_cmd = [
+            "aws", "s3", "ls",
+            "--no-sign-request",
+            s3_base_path
+        ]
+        
+        try:
+            result = subprocess.run(list_cmd, check=True, capture_output=True, text=True)
+            month_dirs = []
             
-            # 查找该月所有数据文件
-            file_pattern = f"location-{location_id}-{year}{month}*.csv*"
-            files = glob.glob(os.path.join(month_path, file_pattern))
+            # 解析输出获取月份目录
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[-1].startswith("month="):
+                    month_dir = parts[-1].strip('/')
+                    month = month_dir.split('=')[1]
+                    month_dirs.append(month)
             
-            # 过滤日期范围内的文件
-            for file_path in files:
-                # 从文件名提取日期
-                file_name = os.path.basename(file_path)
-                # 文件名格式为 location-{locationid}-{year}{month}{day}.csv.gz
-                date_part = file_name.split('-')[2].split('.')[0]  # 提取YYYYMMDD部分
+            if not month_dirs:
+                print(f"未找到 {year_str} 年的月份目录")
+                return False, []
+            
+            print(f"找到 {len(month_dirs)} 个月份目录: {', '.join(month_dirs)}")
+            
+            download_success = False
+            downloaded_files = []
+            
+            # 对每个月份执行下载
+            for month in sorted(month_dirs):
+                month_path = f"{s3_base_path}month={month}/"
+                local_month_dir = os.path.join(location_dir, f"month={month}")
+                os.makedirs(local_month_dir, exist_ok=True)
                 
-                if len(date_part) >= 8:  # 确保有足够的字符
-                    file_date_str = date_part[:8]  # 取前8个字符作为日期
-                    try:
-                        file_date = datetime.strptime(file_date_str, '%Y%m%d')
-                        
-                        # 检查文件日期是否在范围内
-                        if start_dt <= file_date <= end_dt:
-                            all_files.append(file_path)
-                    except ValueError:
-                        # 如果日期解析失败，跳过该文件
-                        print(f"无法解析文件日期: {file_name}")
+                print(f"正在下载 {year_str} 年 {month} 月的数据...")
+                
+                # 列出该月的所有文件
+                list_files_cmd = [
+                    "aws", "s3", "ls",
+                    "--no-sign-request",
+                    month_path
+                ]
+                
+                files_result = subprocess.run(list_files_cmd, check=True, capture_output=True, text=True)
+                files_to_download = []
+                
+                # 解析输出获取文件列表
+                for line in files_result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        file_name = parts[-1]
+                        if file_name.endswith(".csv.gz"):
+                            files_to_download.append(file_name)
+                
+                if not files_to_download:
+                    print(f"月份 {month} 没有找到文件")
+                    continue
+                
+                print(f"找到 {len(files_to_download)} 个文件需要下载")
+                
+                # 下载每个文件
+                for file_name in files_to_download:
+                    local_file = os.path.join(local_month_dir, file_name)
+                    
+                    # 检查本地文件是否已存在
+                    if check_existing and os.path.exists(local_file):
+                        print(f"文件已存在，跳过下载: {file_name}")
+                        downloaded_files.append(local_file)
+                        download_success = True
                         continue
-    
-    return sorted(all_files)
-
-def preprocess_datetime_column(df):
-    """
-    预处理datetime列，确保格式一致
-    
-    参数:
-    df (pandas.DataFrame): 包含datetime列的DataFrame
-    
-    返回:
-    pandas.DataFrame: 预处理后的DataFrame
-    """
-    if df is None or df.empty or 'datetime' not in df.columns:
-        print("警告: 数据为空或没有datetime列")
-        return df
-    
-    print("预处理datetime列，确保格式一致...")
-    
-    # 创建DataFrame的副本
-    df = df.copy()
-    
-    # 确保datetime列是字符串类型
-    df['datetime'] = df['datetime'].astype(str)
-    
-    # 标准化datetime格式
-    # 1. 替换空格为'T'
-    df['datetime'] = df['datetime'].str.replace(' ', 'T')
-    
-    # 2. 处理时区信息，移除时区部分以避免混合时区问题
-    # 查找常见的时区模式并移除
-    timezone_pattern = r'([+-]\d{2}:?\d{2}|\.\d+|Z)$'
-    df['datetime'] = df['datetime'].str.replace(timezone_pattern, '', regex=True)
-    
-    # 3. 确保格式为 YYYY-MM-DDThh:mm:ss
-    # 添加缺失的秒数
-    df.loc[df['datetime'].str.count(':') == 1, 'datetime'] = df.loc[df['datetime'].str.count(':') == 1, 'datetime'] + ':00'
-    
-    print("datetime列预处理完成")
-    return df
-
-def sort_by_datetime(df):
-    """
-    按datetime列对DataFrame进行排序
-    
-    参数:
-    df (pandas.DataFrame): 包含datetime列的DataFrame
-    
-    返回:
-    pandas.DataFrame: 排序后的DataFrame
-    """
-    if df is None or df.empty or 'datetime' not in df.columns:
-        print("警告: 数据为空或没有datetime列，无法排序")
-        return df
-    
-    try:
-        print("使用datetime.fromisoformat()方法排序...")
-        
-        # 创建DataFrame的副本
-        df = df.copy()
-        
-        # 创建一个辅助函数，安全地将字符串转换为datetime对象
-        def safe_fromisoformat(dt_str):
-            try:
-                # 确保字符串格式正确
-                if not isinstance(dt_str, str):
-                    dt_str = str(dt_str)
-                
-                # 处理可能的时区信息
-                if '+' in dt_str:
-                    dt_str = dt_str.split('+')[0]
-                if '-' in dt_str and dt_str.count('-') > 2:  # 有时区的减号
-                    dt_str = dt_str.rsplit('-', 1)[0]
-                
-                # 尝试使用fromisoformat解析
-                return datetime.fromisoformat(dt_str)
-            except ValueError:
-                # 如果解析失败，尝试更宽松的解析方法
-                try:
-                    return pd.to_datetime(dt_str)
-                except:
-                    # 如果仍然失败，返回一个很早的日期作为默认值
-                    print(f"无法解析日期时间: {dt_str}")
-                    return datetime(1900, 1, 1)
-        
-        # 创建一个排序键列
-        df['sort_key'] = df['datetime'].apply(safe_fromisoformat)
-        
-        # 按排序键排序
-        df = df.sort_values('sort_key')
-        
-        # 删除辅助列
-        df = df.drop(columns=['sort_key'])
-        
-        print("成功使用datetime.fromisoformat()方法排序")
-        return df
-        
+                    
+                    s3_file = f"{month_path}{file_name}"
+                    print(f"正在从S3下载文件: {s3_file} -> {local_file}")
+                    
+                    # 执行AWS CLI命令下载单个文件
+                    cmd = [
+                        "aws", "s3", "cp",
+                        "--no-sign-request",
+                        s3_file,
+                        local_file
+                    ]
+                    
+                    try:
+                        dl_result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                        print(f"下载完成: {file_name}")
+                        downloaded_files.append(local_file)
+                        download_success = True
+                    except subprocess.CalledProcessError as e:
+                        print(f"下载失败: {file_name}")
+                        print(f"错误输出: {e.stderr}")
+            
+            print(f"总共下载了 {len(downloaded_files)} 个文件")
+            return download_success, downloaded_files
+            
+        except subprocess.CalledProcessError as e:
+            print(f"获取月份列表失败: {e.stderr}")
+            return False, []
+            
     except Exception as e:
-        print(f"使用datetime.fromisoformat()排序时出错: {e}")
-        print("回退到默认排序方法...")
-        return df.sort_values('datetime')
+        print(f"按年下载数据时出错: {e}")
+        return False, []
 
-def load_and_merge_data_files(csv_files):
-    """
-    加载并合并多个CSV文件
-    
-    参数:
-    csv_files (list): CSV文件路径列表
-    
-    返回:
-    pandas.DataFrame: 合并后的DataFrame
-    """
-    if not csv_files:
-        print("没有提供CSV文件")
-        return None
-    
-    all_data = []
-    for file_path in csv_files:
-        print(f"处理文件: {os.path.basename(file_path)}")
-        df = load_csv_file(file_path)
-        if df is not None and not df.empty:
-            # 确保datetime列保持为字符串类型
-            if 'datetime' in df.columns:
-                df['datetime'] = df['datetime'].astype(str)
-            all_data.append(df)
-    
-    if not all_data:
-        print("没有有效数据可处理")
-        return None
-    
-    # 合并所有数据
-    merged_df = pd.concat(all_data, ignore_index=True)
-    print(f"合并后数据形状: {merged_df.shape}")
-    return merged_df
-
-def perform_time_resampling(df, time_freq, agg_method='mean'):
-    """
-    按指定时间频率重采样数据
-    
-    参数:
-    df (pandas.DataFrame): 输入数据
-    time_freq (str): 时间频率，如'1H'表示1小时，'1D'表示1天
-    agg_method (str or dict): 聚合方法，可以是字符串或字典
-    
-    返回:
-    pandas.DataFrame: 重采样后的数据
-    """
-    if df is None or df.empty:
-        print("警告: 数据为空，无法进行时间重采样")
-        return df
-    
-    if 'datetime' not in df.columns:
-        print("警告: 数据中没有datetime列，无法进行时间重采样")
-        return df
-    
-    print(f"按 {time_freq} 时间频率重采样数据...")
-    
-    try:
-        # 创建DataFrame的副本
-        df = df.copy()
-        
-        # 对于重采样，需要将datetime转换为datetime类型，设置utc=True避免混合时区警告
-        df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce', utc=True)
-        
-        # 进行时间重采样
-        resampled_df = resample_time_series(df, time_freq=time_freq, agg_method=agg_method)
-        
-        # 重采样后，将datetime列转回字符串以便OpenAQProcessor处理
-        if 'datetime' in resampled_df.columns:
-            resampled_df['datetime'] = resampled_df['datetime'].dt.strftime('%Y-%m-%dT%H:%M:%S')
-        
-        print(f"时间重采样后数据形状: {resampled_df.shape}")
-        return resampled_df
-        
-    except Exception as e:
-        print(f"时间重采样失败: {e}")
-        print("返回原始数据...")
-        return df
 
 def process_with_openaq_processor(df):
     """
@@ -531,20 +421,20 @@ def process_aq_data_and_extract_features(location_id, data_dir=None, output_dir=
             csv_files = find_data_files(data_dir, location_id, start_date, end_date)
             if not csv_files:
                 print("下载后仍未找到匹配的CSV文件，可能S3上没有该日期范围的数据")
-                return None, None
+                return None, None, None
         else:
             print("从AWS S3下载数据失败")
-            return None, None
+            return None, None, None
     elif not csv_files:
         print(f"未找到匹配的CSV文件")
-        return None, None
+        return None, None, None
     
     print(f"找到 {len(csv_files)} 个CSV文件")
     
     # 步骤3: 加载并合并数据文件
     merged_df = load_and_merge_data_files(csv_files)
     if merged_df is None:
-        return None, None
+        return None, None, None
     
     # 步骤4: 预处理datetime列
     merged_df = preprocess_datetime_column(merged_df)
@@ -593,28 +483,67 @@ def main():
     parser.add_argument('--time_freq', type=str, help='时间重采样频率，如1H表示1小时，1D表示1天，不指定则不重采样')
     parser.add_argument('--agg_method', type=str, default='mean', help='聚合方法，默认为mean，可选值：mean, median, max, min, sum')
     parser.add_argument('--download', action='store_true', help='如果数据不存在，从AWS S3下载')
+    parser.add_argument('--check_incomplete', action='store_true', help='检查并下载不完整的月份数据')
+    parser.add_argument('--start_year', type=int, help='检查不完整月份的起始年份')
+    parser.add_argument('--end_year', type=int, help='检查不完整月份的结束年份')
+    parser.add_argument('--start_month', type=int, help='检查不完整月份的起始月份')
+    parser.add_argument('--end_month', type=int, help='检查不完整月份的结束月份')
+    parser.add_argument('--download_year', type=int, help='下载指定年份的所有数据')
+    parser.add_argument('--force_download', action='store_true', help='强制下载，不检查本地是否已存在文件')
     
     args = parser.parse_args()
-    
-    # 处理聚合方法
-    agg_method = args.agg_method
-    if agg_method not in ['mean', 'median', 'max', 'min', 'sum']:
-        print(f"警告: 不支持的聚合方法 {agg_method}，使用默认值 mean")
-        agg_method = 'mean'
     
     # 设置默认数据目录
     data_dir = args.data_dir if args.data_dir else os.path.join(os.getcwd(), "data/opendb-aq")
     
-    process_aq_data_and_extract_features(
-        args.location_id,
-        data_dir,
-        args.output_dir,
-        args.start_date,
-        args.end_date,
-        args.time_freq,
-        agg_method,
-        args.download
-    )
+    # 按年下载数据
+    if args.download_year is not None:
+        print(f"正在下载位置ID {args.location_id} 的 {args.download_year} 年数据...")
+        success, files = fetch_data_from_s3_by_year(
+            location_id=args.location_id,
+            data_dir=data_dir,
+            year=args.download_year,
+            check_existing=not args.force_download
+        )
+        
+        status = "成功" if success else "失败"
+        print(f"\n下载结果: {status}, 文件数: {len(files)}")
+        return
+    
+    # 检查是否需要下载不完整月份
+    if args.check_incomplete:
+        print(f"检查并下载位置ID {args.location_id} 的不完整月份数据...")
+        results = check_and_download_incomplete_months(
+            location_id=args.location_id,
+            data_dir=data_dir,
+            start_year=args.start_year,
+            end_year=args.end_year,
+            start_month=args.start_month,
+            end_month=args.end_month
+        )
+        
+        print("\n下载结果汇总:")
+        for (year, month), result in sorted(results.items()):
+            status = "成功" if result['success'] else "失败"
+            print(f"{year}-{month:02d}: {status}, 文件数: {result['files_count']}")
+    else:
+        # 处理聚合方法
+        agg_method = args.agg_method
+        if agg_method not in ['mean', 'median', 'max', 'min', 'sum']:
+            print(f"警告: 不支持的聚合方法 {agg_method}，使用默认值 mean")
+            agg_method = 'mean'
+        
+        process_aq_data_and_extract_features(
+            args.location_id,
+            data_dir,
+            args.output_dir,
+            args.start_date,
+            args.end_date,
+            args.time_freq,
+            agg_method,
+            args.download
+        )
+
 
 if __name__ == '__main__':
     main() 
