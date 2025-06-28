@@ -1,17 +1,20 @@
 """
 Personalized City Poster Generator API
 
-This Flask application provides an API for generating personalized city posters
+This FastAPI application provides an API for generating personalized city posters
 with AQI information and health recommendations based on user profiles.
 """
 
 import os
 import json
 import logging
-from flask import Flask, request, jsonify, send_file
-from io import BytesIO
+from fastapi import FastAPI, HTTPException, Response, BackgroundTasks
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List, Union
 import base64
 from datetime import datetime
+from io import BytesIO
 
 # Import custom modules
 from aws_air_quality_predictor.genai.generate_image import generate_city_poster, CityPosterGenerator
@@ -22,8 +25,12 @@ from aws_air_quality_predictor.genai.user_profile import UserProfile, create_use
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
-app = Flask(__name__)
+# Initialize FastAPI app
+app = FastAPI(
+    title="City Poster Generator API",
+    description="API for generating personalized city posters with AQI information",
+    version="1.0.0"
+)
 
 # Configuration
 S3_BUCKET = os.environ.get('S3_BUCKET')
@@ -36,6 +43,48 @@ poster_generator = CityPosterGenerator(model_id=BEDROCK_MODEL_ID, s3_bucket=S3_B
 # Simple in-memory user profile store (for demo purposes)
 # In production, use a database like DynamoDB
 user_profiles = {}
+
+# Pydantic models for request/response validation
+class PosterRequest(BaseModel):
+    city: str
+    aqi: float
+    theme: Optional[str] = None
+    user_id: Optional[str] = None
+    format: Optional[str] = "json"
+    profile_data: Optional[Dict[str, Any]] = None
+
+class ProfileData(BaseModel):
+    preferences: Dict[str, Any]
+
+class HealthResponse(BaseModel):
+    status: str
+    timestamp: str
+    service: str
+
+class AQICategory(BaseModel):
+    range: str
+    category: str
+    advice: str
+
+class AQIInfo(BaseModel):
+    aqi: int
+    category: str
+    health_advice: str
+
+class PosterResponse(BaseModel):
+    city_name: str
+    theme_of_day: str
+    aqi_value: float
+    aqi_category: str
+    health_advice: str
+    s3_url: str
+    image_data: str
+
+class ProfileResponse(BaseModel):
+    user_id: str
+    preferences: Dict[str, Any]
+    history: Optional[List[Dict[str, Any]]] = None
+    message: Optional[str] = None
 
 def get_user_profile(user_id):
     """Get user profile from store or create a new one"""
@@ -57,37 +106,25 @@ def save_user_profile(profile):
         
     user_profiles[profile.user_id] = profile
 
-@app.route('/health', methods=['GET'])
+@app.get("/health", response_model=HealthResponse)
 def health_check():
     """Health check endpoint"""
-    return jsonify({
+    return {
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'service': 'city-poster-generator'
-    })
+    }
 
-@app.route('/api/v1/posters/generate', methods=['POST'])
-def generate_poster():
+@app.post("/api/v1/posters/generate", response_model=PosterResponse)
+async def generate_poster(request: PosterRequest):
     """Generate a personalized city poster"""
     try:
-        # Parse request data
-        data = request.json
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-            
-        # Required parameters
-        city_name = data.get('city')
-        if not city_name:
-            return jsonify({'error': 'City name is required'}), 400
-            
-        aqi_value = data.get('aqi')
-        if not isinstance(aqi_value, (int, float)):
-            return jsonify({'error': 'Valid AQI value is required'}), 400
-            
-        # Optional parameters
-        theme_of_day = data.get('theme')
-        user_id = data.get('user_id')
-        output_format = data.get('format', 'json')  # 'json' or 'image'
+        # Extract data from request
+        city_name = request.city
+        aqi_value = request.aqi
+        theme_of_day = request.theme
+        user_id = request.user_id
+        output_format = request.format
         
         # Get user profile if available
         user_profile = None
@@ -95,8 +132,8 @@ def generate_poster():
             user_profile = get_user_profile(user_id)
             
             # Update profile with request data if provided
-            if 'profile_data' in data:
-                user_profile.update_preferences(data['profile_data'])
+            if request.profile_data:
+                user_profile.update_preferences(request.profile_data)
                 save_user_profile(user_profile)
         
         # Determine theme if not provided
@@ -139,15 +176,14 @@ def generate_poster():
         if output_format == 'image':
             # Decode image from base64 and return as file
             image_data = base64.b64decode(result['image_data'])
-            return send_file(
+            return StreamingResponse(
                 BytesIO(image_data),
-                mimetype='image/jpeg',
-                as_attachment=True,
-                download_name=f"{city_name.lower().replace(' ', '_')}_poster.jpg"
+                media_type='image/jpeg',
+                headers={"Content-Disposition": f"attachment; filename={city_name.lower().replace(' ', '_')}_poster.jpg"}
             )
         else:
             # Return JSON response
-            return jsonify({
+            return {
                 'city_name': result['city_name'],
                 'theme_of_day': result['theme_of_day'],
                 'aqi_value': result['aqi_value'],
@@ -155,50 +191,46 @@ def generate_poster():
                 'health_advice': result['health_advice'],
                 's3_url': result['s3_url'],
                 'image_data': result['image_data']  # Base64 encoded image
-            })
+            }
             
     except Exception as e:
         logger.error(f"Error generating poster: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/v1/users/<user_id>/profile', methods=['GET', 'PUT'])
-def manage_user_profile(user_id):
-    """Get or update user profile"""
+@app.get("/api/v1/users/{user_id}/profile", response_model=ProfileResponse)
+async def get_profile(user_id: str):
+    """Get user profile"""
     if not ENABLE_USER_PROFILES:
-        return jsonify({'error': 'User profiles are disabled'}), 403
+        raise HTTPException(status_code=403, detail="User profiles are disabled")
         
-    if request.method == 'GET':
-        # Get user profile
-        profile = get_user_profile(user_id)
-        if not profile:
-            return jsonify({'error': 'User profile not found'}), 404
+    profile = get_user_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="User profile not found")
             
-        return jsonify({
-            'user_id': profile.user_id,
-            'preferences': profile.preferences,
-            'history': profile.history
-        })
-    
-    elif request.method == 'PUT':
-        # Update user profile
-        data = request.json
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-            
-        profile = get_user_profile(user_id)
-        if 'preferences' in data:
-            profile.update_preferences(data['preferences'])
-            
-        save_user_profile(profile)
-        
-        return jsonify({
-            'user_id': profile.user_id,
-            'preferences': profile.preferences,
-            'message': 'Profile updated successfully'
-        })
+    return {
+        'user_id': profile.user_id,
+        'preferences': profile.preferences,
+        'history': profile.history
+    }
 
-@app.route('/api/v1/aqi/categories', methods=['GET'])
-def get_aqi_categories():
+@app.put("/api/v1/users/{user_id}/profile", response_model=ProfileResponse)
+async def update_profile(user_id: str, profile_data: ProfileData):
+    """Update user profile"""
+    if not ENABLE_USER_PROFILES:
+        raise HTTPException(status_code=403, detail="User profiles are disabled")
+            
+    profile = get_user_profile(user_id)
+    profile.update_preferences(profile_data.preferences)
+    save_user_profile(profile)
+        
+    return {
+        'user_id': profile.user_id,
+        'preferences': profile.preferences,
+        'message': 'Profile updated successfully'
+    }
+
+@app.get("/api/v1/aqi/categories", response_model=List[AQICategory])
+async def get_aqi_categories():
     """Get AQI categories and health advice"""
     categories = [
         {'range': '0-50', 'category': 'Good', 'advice': get_health_advice('Good')},
@@ -209,34 +241,35 @@ def get_aqi_categories():
         {'range': '301+', 'category': 'Hazardous', 'advice': get_health_advice('Hazardous')}
     ]
     
-    return jsonify(categories)
+    return categories
 
-@app.route('/api/v1/aqi/category/<int:aqi_value>', methods=['GET'])
-def get_aqi_info(aqi_value):
+@app.get("/api/v1/aqi/category/{aqi_value}", response_model=AQIInfo)
+async def get_aqi_info(aqi_value: int):
     """Get AQI category and health advice for a specific AQI value"""
     category = get_aqi_category(aqi_value)
     advice = get_health_advice(category)
     
-    return jsonify({
+    return {
         'aqi': aqi_value,
         'category': category,
         'health_advice': advice
-    })
+    }
 
-@app.errorhandler(404)
-def not_found(e):
+@app.exception_handler(404)
+async def not_found_handler(request, exc):
     """Handle 404 errors"""
-    return jsonify({'error': 'Resource not found'}), 404
+    return JSONResponse(status_code=404, content={'error': 'Resource not found'})
 
-@app.errorhandler(500)
-def server_error(e):
+@app.exception_handler(500)
+async def server_error_handler(request, exc):
     """Handle 500 errors"""
-    logger.error(f"Server error: {str(e)}")
-    return jsonify({'error': 'Internal server error'}), 500
+    logger.error(f"Server error: {str(exc)}")
+    return JSONResponse(status_code=500, content={'error': 'Internal server error'})
 
 if __name__ == '__main__':
-    # Get port from environment or default to 5000
-    port = int(os.environ.get('PORT', 5000))
+    # Get port from environment or default to 8000
+    port = int(os.environ.get('PORT', 8000))
     
-    # Run the Flask app
-    app.run(host='0.0.0.0', port=port, debug=False) 
+    # Run the FastAPI app using uvicorn
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=port) 
