@@ -5,6 +5,7 @@ import argparse
 import os
 from typing import List, Dict, Optional, Union, Any
 from utils import get_years_from_time_range
+from datetime import datetime, timedelta
 
 
 def fetch_openaq_location_ids(lat, lng, api_key=None, radius_m=10000, limit=10):
@@ -208,7 +209,7 @@ def get_measurements_by_sensor_id(sensor_id: int, datetime_from: Optional[str] =
         
         # 调试输出
         print(f"API响应状态码: {resp.status_code}")
-        
+        print(f"sensor resp result: {data}")
         # 返回结果数据
         if 'results' in data and len(data['results']) > 0:
             print(f"找到{len(data['results'])}条测量记录")
@@ -306,91 +307,182 @@ def get_latest_measurements_by_location(location_id: int, limit: int = 100, page
 
 
 if __name__=='__main__':
+   # 创建命令行参数解析器
+   parser = argparse.ArgumentParser(description='测试OpenAQ API工具函数')
+   parser.add_argument('--test', type=str, choices=['locations', 'sensors', 'measurements', 'latest', 'all'], 
+                      default='measurements', help='要测试的功能')
+   parser.add_argument('--api-key', type=str, default="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00", 
+                      help='OpenAQ API密钥')
+   parser.add_argument('--location-id', type=str, default="6868", help='位置ID')
+   parser.add_argument('--sensor-id', type=int, default=1662909, help='传感器ID')
+   parser.add_argument('--lat', type=float, default=35.43, help='纬度')
+   parser.add_argument('--lng', type=float, default=-119.01, help='经度')
+   parser.add_argument('--days', type=int, default=7, help='获取最近几天的数据')
+   
+   args = parser.parse_args()
+   
+   # 计算日期范围
+   end_date = datetime.now().strftime("%Y-%m-%d")
+   start_date = (datetime.now() - timedelta(days=args.days)).strftime("%Y-%m-%d")
+   
+   print(f"测试时间范围: {start_date} 到 {end_date}")
+   
    # 测试获取监测站点ID
- #  ids = fetch_openaq_location_ids(35.43, -119.01, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
- #  print(f"找到的监测站点IDs: {ids}")
+   if args.test in ['locations', 'all']:
+       print("\n===== 测试获取监测站点ID =====")
+       ids = fetch_openaq_location_ids(args.lat, args.lng, api_key=args.api_key)
+       print(f"找到的监测站点IDs: {ids}")
+       
+       if ids:
+           for id in ids:
+               location_info = get_location_by_id(id, api_key=args.api_key)
+               print("\n监测站点详细信息:")
+               print(f"id: {id}")
+               print(f"名称: {location_info.get('name', 'N/A')}")
+               print(f"城市: {location_info.get('city', 'N/A')}")
+               print(f"国家: {location_info.get('country', 'N/A')}")
+               print(f"坐标: {location_info.get('coordinates', {}).get('latitude', 'N/A')}, {location_info.get('coordinates', {}).get('longitude', 'N/A')}")
+               print(f"参数: {', '.join([p.get('parameter', 'N/A') for p in location_info.get('parameters', [])])}")
    
-   end_date = "2024-03-12"
-   start_date = "2024-03-12"
    # 测试获取传感器信息
-   location_id = "6868"
-   sensors_data = get_sensors_by_location_id(location_id, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
-   print(f"\n位置ID {location_id} 的传感器信息:")
-   
-   # 存储找到的第一个传感器ID用于测试
-   first_sensor_id = None
-   
-   if 'results' in sensors_data and sensors_data['results']:
-       for i, sensor in enumerate(sensors_data['results']):
-           print(f"\n传感器 #{i+1}:")
-           sensor_id = sensor.get('id', 'N/A')
-           print(f"ID: {sensor_id}")
-           print(f"参数: {sensor.get('parameter', 'N/A')}")
-           print(f"类型: {sensor.get('sensor_type', 'N/A')}")
-           if 'last_value' in sensor:
-               print(f"最新值: {sensor['last_value']} {sensor.get('unit', '')}")
-               print(f"最后更新时间: {sensor.get('last_updated', 'N/A')}")
+   if args.test in ['sensors', 'all']:
+       print("\n===== 测试获取传感器信息 =====")
+       location_id = args.location_id
+       print(f"获取位置ID {location_id} 的传感器信息:")
+       sensors_data = get_sensors_by_location_id(location_id, api_key=args.api_key)
+       
+       # 存储找到的传感器ID
+       sensor_ids = []
+       
+       if 'results' in sensors_data and sensors_data['results']:
+           for i, sensor in enumerate(sensors_data['results']):
+               print(f"\n传感器 #{i+1}:")
+               sensor_id = sensor.get('id', 'N/A')
+               print(f"ID: {sensor_id}")
+               print(f"参数: {sensor.get('parameter', 'N/A')}")
+               print(f"类型: {sensor.get('sensor_type', 'N/A')}")
+               if 'last_value' in sensor:
+                   print(f"最新值: {sensor['last_value']} {sensor.get('unit', '')}")
+                   print(f"最后更新时间: {sensor.get('last_updated', 'N/A')}")
                
-               # 保存第一个传感器ID用于测试
-               if i == 0 and sensor_id != 'N/A':
-                   first_sensor_id = sensor_id
-   else:
-       print("未找到传感器数据")
+               # 保存传感器ID
+               if sensor_id != 'N/A':
+                   sensor_ids.append(sensor_id)
+       else:
+           print("未找到传感器数据")
    
-   first_sensor_id = 1662909
-   # 如果找到了传感器ID，测试获取该传感器的测量数据
-   for first_sensor_id in [1662909]:
-       print(f"\n测试获取传感器 {first_sensor_id} 的年度聚合数据:")
+   # 测试获取传感器测量数据
+   if args.test in ['measurements', 'all']:
+       print("\n===== 测试获取传感器测量数据 =====")
+       
+       # 使用命令行参数中的传感器ID
+       sensor_id = args.sensor_id
+       
+       print(f"\n测试 1: 获取传感器 {sensor_id} 的指定日期范围数据")
+       print(f"日期范围: {start_date} 到 {end_date}")
        
        measurements = get_measurements_by_sensor_id(
-           first_sensor_id, 
+           sensor_id, 
            datetime_from=start_date,
            datetime_to=end_date,
            limit=100,
-           api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00"
+           api_key=args.api_key
        )
-       print(measurements)
        
        if 'results' in measurements and measurements['results']:
-           print(f"找到 {len(measurements['results'])} 条年度聚合记录")
-           for i, record in enumerate(measurements['results'][:3]):  # 只显示前3条记录
+           print(f"找到 {len(measurements['results'])} 条测量记录")
+           for i, record in enumerate(measurements['results'][:5]):  # 显示前5条记录
                print(f"\n记录 #{i+1}:")
                print(f"日期: {record.get('day', 'N/A')}")
                print(f"平均值: {record.get('average', 'N/A')}")
                print(f"最小值: {record.get('minimum', 'N/A')}")
                print(f"最大值: {record.get('maximum', 'N/A')}")
+               print(f"单位: {record.get('unit', 'N/A')}")
        else:
            print("未找到测量数据")
+       
+       print(f"\n测试 2: 只获取最近3天的数据")
+       recent_start = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+       print(f"日期范围: {recent_start} 到 {end_date}")
+       
+       recent_measurements = get_measurements_by_sensor_id(
+           sensor_id, 
+           datetime_from=recent_start,
+           datetime_to=end_date,
+           limit=100,
+           api_key=args.api_key
+       )
+       
+       if 'results' in recent_measurements and recent_measurements['results']:
+           print(f"找到 {len(recent_measurements['results'])} 条最近测量记录")
+           for i, record in enumerate(recent_measurements['results']):
+               print(f"\n记录 #{i+1}:")
+               print(f"日期: {record.get('day', 'N/A')}")
+               print(f"平均值: {record.get('average', 'N/A')}")
+               print(f"最小值: {record.get('minimum', 'N/A')}")
+               print(f"最大值: {record.get('maximum', 'N/A')}")
+               print(f"单位: {record.get('unit', 'N/A')}")
+       else:
+           print("未找到最近测量数据")
+       
+       print(f"\n测试 3: 测试分页功能")
+       print(f"获取第一页 (limit=5):")
+       
+       page1_measurements = get_measurements_by_sensor_id(
+           sensor_id, 
+           datetime_from=start_date,
+           datetime_to=end_date,
+           limit=5,
+           page=1,
+           api_key=args.api_key
+       )
+       
+       if 'results' in page1_measurements and page1_measurements['results']:
+           print(f"第一页找到 {len(page1_measurements['results'])} 条记录")
+           for i, record in enumerate(page1_measurements['results']):
+               print(f"记录 #{i+1}: {record.get('day', 'N/A')} - 平均值: {record.get('average', 'N/A')}")
+       else:
+           print("第一页未找到数据")
+       
+       print(f"\n获取第二页 (limit=5):")
+       
+       page2_measurements = get_measurements_by_sensor_id(
+           sensor_id, 
+           datetime_from=start_date,
+           datetime_to=end_date,
+           limit=5,
+           page=2,
+           api_key=args.api_key
+       )
+       
+       if 'results' in page2_measurements and page2_measurements['results']:
+           print(f"第二页找到 {len(page2_measurements['results'])} 条记录")
+           for i, record in enumerate(page2_measurements['results']):
+               print(f"记录 #{i+1}: {record.get('day', 'N/A')} - 平均值: {record.get('average', 'N/A')}")
+       else:
+           print("第二页未找到数据")
    
    # 测试获取位置的最新测量数据
-   print("\n测试获取位置的最新测量数据:")
-   location_ids = [6868]  # 示例位置ID
-   
-   for loc_id in location_ids:
-       print(f"\n获取位置ID {loc_id} 的最新测量数据:")
+   if args.test in ['latest', 'all']:
+       print("\n===== 测试获取位置的最新测量数据 =====")
+       location_id = args.location_id
+       
+       print(f"获取位置ID {location_id} 的最新测量数据:")
        latest_data = get_latest_measurements_by_location(
-           loc_id,
+           location_id,
            limit=10,
-           api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00"
+           api_key=args.api_key
        )
+       
        if 'results' in latest_data and latest_data['results']:
            print(f"找到 {len(latest_data['results'])} 条最新测量记录")
-           for i, measurement in enumerate(latest_data['results'][:3]):  # 只显示前3条记录
+           for i, measurement in enumerate(latest_data['results']):
                print(f"\n测量 #{i+1}:")
                print(f"sensorsId: {measurement.get('sensorsId', 'N/A')}")
+               print(f"参数: {measurement.get('parameter', 'N/A')}")
                print(f"值: {measurement.get('value', 'N/A')} {measurement.get('unit', '')}")
                print(f"日期时间: {measurement.get('datetime', {}).get('utc', 'N/A')}")
        else:
            print("未找到最新测量数据")
    
-   ids = []
-   if ids:
-    for id in ids:
-       location_info = get_location_by_id(id, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
-       print("\n监测站点详细信息:")
-       print(f"id: {id}")
-       print(f"名称: {location_info.get('name', 'N/A')}")
-       print(f"城市: {location_info.get('city', 'N/A')}")
-       print(f"国家: {location_info.get('country', 'N/A')}")
-       print(f"坐标: {location_info.get('coordinates', {}).get('latitude', 'N/A')}, {location_info.get('coordinates', {}).get('longitude', 'N/A')}")
-       print(f"参数: {', '.join([p.get('parameter', 'N/A') for p in location_info.get('parameters', [])])}")
+   print("\n测试完成!")

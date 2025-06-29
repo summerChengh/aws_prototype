@@ -1,18 +1,27 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import pandas as pd
 import numpy as np
 import argparse
 import os
 import re
 from datetime import datetime, timedelta
+import logging
+from typing import List, Dict, Optional, Union, Any, Tuple, Set
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class OpenAQProcessor:
     """
-    OpenAQ数据处理类，用于加载、处理和填充OpenAQ数据
+    OpenAQ数据处理器，用于处理和分析OpenAQ空气质量数据
     """
     
     def __init__(self, fill_value=np.nan):
         """
-        初始化OpenAQ数据处理器
+        初始化OpenAQ处理器
         
         参数:
         fill_value: 填充缺失值使用的默认值，默认为NaN
@@ -23,6 +32,12 @@ class OpenAQProcessor:
         self.location_col = 'location_id'
         self.aggregated_df = None
         self.parameters_dict ={24: ["pm2.5", "pm10", "SO2"], 8: ["o3", "co"], 1: ["o3", "so2", "no2"]}
+        
+        # 默认的滑动窗口大小（小时）
+        self.window_sizes = [3, 6, 12, 24, 48, 72]
+        
+        # 默认的聚合函数
+        self.agg_functions = ['mean', 'min', 'max', 'std']
         
     def load_data(self, csv_file):
         """
