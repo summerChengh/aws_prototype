@@ -21,6 +21,7 @@ interface PredictionResult {
   level: string
   pollutants: PollutantLevels
   image_url: string
+  image_data?: string
   health_advice: string
 }
 

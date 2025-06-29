@@ -50,24 +50,26 @@
     
     <!-- 预测结果展示区域 -->
     <div v-if="predictionResult" class="results-panel">
-      <div class="aqi-panel" :class="aqiLevelClass">
-        <h3>空气质量指数 (AQI)</h3>
-        <div class="aqi-value">{{ predictionResult.aqi }}</div>
-        <div class="aqi-level">{{ predictionResult.level }}</div>
-      </div>
-      
-      <!-- 生成图像展示区域 -->
-      <div class="image-panel">
-        <h3>空气质量可视化</h3>
-        <div class="image-container">
-          <img 
-            v-if="predictionResult.image_url" 
-            :src="predictionResult.image_url" 
-            alt="空气质量可视化" 
-            @click="showFullImage"
-          />
-          <div v-else class="image-placeholder">
-            图像生成中...
+      <div class="image-aqi-wrapper">
+        <div class="aqi-panel-wrapper">
+          <div class="aqi-panel" :class="aqiLevelClass">
+            <h3>空气质量指数 (AQI)</h3>
+            <div class="aqi-value">{{ predictionResult.aqi }}</div>
+            <div class="aqi-level">{{ predictionResult.level }}</div>
+          </div>
+        </div>
+        <div class="image-panel">
+          <h3>空气质量可视化</h3>
+          <div class="image-container">
+            <img 
+              v-if="imageSource" 
+              :src="imageSource" 
+              alt="空气质量可视化" 
+              @click="showFullImage"
+            />
+            <div v-else class="image-placeholder">
+              图像生成中...
+            </div>
           </div>
         </div>
       </div>
@@ -104,8 +106,8 @@
       center
     >
       <img 
-        v-if="predictionResult?.image_url" 
-        :src="predictionResult.image_url" 
+        v-if="imageSource" 
+        :src="imageSource" 
         alt="空气质量可视化" 
         style="width: 100%;"
       />
@@ -196,6 +198,21 @@ export default defineComponent({
       return 'error'
     })
     
+    // 图像源计算属性
+    const imageSource = computed(() => {
+      if (!predictionResult.value) return null
+      
+      // 优先使用image_url，如果为空则尝试使用image_data
+      if (predictionResult.value.image_url) {
+        return predictionResult.value.image_url
+      } else if (predictionResult.value.image_data) {
+        // 使用base64图像数据
+        return `data:image/jpeg;base64,${predictionResult.value.image_data}`
+      }
+      
+      return null
+    })
+    
     // 获取城市列表
     const fetchCities = async () => {
       citiesLoading.value = true
@@ -218,6 +235,9 @@ export default defineComponent({
       }
       
       predictionLoading.value = true
+      // 先清空之前的结果，这样会显示"图像生成中..."
+      predictionResult.value = null
+      
       try {
         const result = await airQualityStore.predictAirQuality(form.cityId, form.date)
         predictionResult.value = result
@@ -250,7 +270,8 @@ export default defineComponent({
       aqiLevelClass,
       alertType,
       submitPrediction,
-      showFullImage
+      showFullImage,
+      imageSource
     }
   }
 })
@@ -281,13 +302,25 @@ export default defineComponent({
 }
 
 .results-panel {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 20px;
-  
-  @media (min-width: 768px) {
-    grid-template-columns: repeat(2, 1fr);
-  }
+}
+
+.image-aqi-wrapper {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 20px;
+  position: relative;
+}
+
+.aqi-panel-wrapper {
+  flex: 0 0 320px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  min-width: 260px;
 }
 
 .aqi-panel {
@@ -296,6 +329,8 @@ export default defineComponent({
   padding: 20px;
   text-align: center;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 320px;
   
   h3 {
     margin-top: 0;
@@ -350,7 +385,7 @@ export default defineComponent({
   border-radius: 8px;
   padding: 20px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  grid-column: span 2;
+  flex: 1 1 0%;
   
   h3 {
     margin-top: 0;
@@ -400,6 +435,18 @@ export default defineComponent({
   
   .pollutants-info {
     margin-top: 20px;
+  }
+}
+
+@media (max-width: 900px) {
+  .image-aqi-wrapper {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .aqi-panel-wrapper {
+    justify-content: center;
+    min-width: 0;
+    margin-bottom: 10px;
   }
 }
 </style> 
