@@ -847,7 +847,7 @@ class CityPosterGenerator:
             
             # Generate the image based on the mode
             if self.actual_mode == "bedrock":
-                image_data = self._call_bedrock_model(prompt)
+            image_data = self._call_bedrock_model(prompt)
                 logger.info("Image generated using AWS Bedrock")
             elif self.actual_mode == "local_sd":
                 image_data = self._generate_local_sd_image(prompt, city_name, aqi_value)
