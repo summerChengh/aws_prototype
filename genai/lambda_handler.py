@@ -1,7 +1,7 @@
 """
 AWS Lambda Handler for the Personalized City Poster Generator
 
-This module adapts the Flask application to run as an AWS Lambda function,
+This module adapts the FastAPI application to run as an AWS Lambda function,
 enabling serverless deployment of the city poster generator.
 """
 

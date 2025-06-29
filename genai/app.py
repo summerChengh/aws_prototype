@@ -77,7 +77,7 @@ class PosterResponse(BaseModel):
     aqi_value: float
     aqi_category: str
     health_advice: str
-    s3_url: str
+    s3_url: str = ""  # 设置默认值为空字符串
     image_data: str
 
 class ProfileResponse(BaseModel):
@@ -153,6 +153,7 @@ async def generate_poster(request: PosterRequest):
                     theme_of_day = "Winter Scene"
         
         logger.info(f"Generating poster for {city_name} with theme '{theme_of_day}' and AQI {aqi_value}")
+       
         
         # Generate the poster
         result = generate_city_poster(
@@ -189,7 +190,7 @@ async def generate_poster(request: PosterRequest):
                 'aqi_value': result['aqi_value'],
                 'aqi_category': result['aqi_category'],
                 'health_advice': result['health_advice'],
-                's3_url': result['s3_url'],
+                's3_url': result['s3_url'] or "",  # 确保s3_url为None时返回空字符串
                 'image_data': result['image_data']  # Base64 encoded image
             }
             

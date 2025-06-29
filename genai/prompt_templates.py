@@ -10,6 +10,7 @@ information and health recommendations.
 CITY_POSTER_BASE_TEMPLATE = """
 Create a beautiful, artistic poster-style image of {city_name} that captures its unique characteristics.
 The image should prominently feature {theme_of_day} theme.
+Include iconic landmarks and representative architecture of {city_name} as the main focal point.
 The scene should reflect an Air Quality Index (AQI) of {aqi_value} ({aqi_category}), showing appropriate atmospheric conditions.
 The image should be high quality, photorealistic with artistic elements, suitable for a weather/air quality app.
 """
