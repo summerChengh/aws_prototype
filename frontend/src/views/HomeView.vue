@@ -50,50 +50,50 @@
     
     <!-- 预测结果展示区域 -->
     <div v-if="predictionResult" class="results-panel">
-      <div class="image-aqi-wrapper">
-        <div class="aqi-panel-wrapper">
-          <div class="aqi-panel" :class="aqiLevelClass">
-            <h3>空气质量指数 (AQI)</h3>
-            <div class="aqi-value">{{ predictionResult.aqi }}</div>
-            <div class="aqi-level">{{ predictionResult.level }}</div>
-          </div>
-        </div>
-        <div class="image-panel">
-          <h3>空气质量可视化</h3>
-          <div class="image-container">
-            <img 
-              v-if="imageSource" 
-              :src="imageSource" 
-              alt="空气质量可视化" 
-              @click="showFullImage"
-            />
-            <div v-else class="image-placeholder">
-              图像生成中...
-            </div>
+      <!-- 生成图像展示区域 -->
+      <div class="image-panel">
+        <h3>空气质量可视化</h3>
+        <div class="image-container">
+          <img 
+            v-if="imageSource" 
+            :src="imageSource" 
+            alt="空气质量可视化" 
+            @click="showFullImage"
+          />
+          <div v-else class="image-placeholder">
+            图像生成中...
           </div>
         </div>
       </div>
       
-      <!-- 健康建议展示区域 -->
-      <div class="advice-panel">
-        <h3>健康建议</h3>
-        <el-alert
-          :title="predictionResult.health_advice"
-          :type="alertType"
-          :closable="false"
-          show-icon
-        />
+      <div class="info-row">
+        <div class="aqi-panel" :class="aqiLevelClass">
+          <h3>空气质量指数 (AQI)</h3>
+          <div class="aqi-value">{{ predictionResult.aqi }}</div>
+          <div class="aqi-level">{{ predictionResult.level }}</div>
+        </div>
         
-        <div class="pollutants-info">
-          <h4>主要污染物数据</h4>
-          <el-descriptions :column="3" border>
-            <el-descriptions-item label="PM2.5">{{ predictionResult.pollutants.pm25 }} μg/m³</el-descriptions-item>
-            <el-descriptions-item label="PM10">{{ predictionResult.pollutants.pm10 }} μg/m³</el-descriptions-item>
-            <el-descriptions-item label="O3">{{ predictionResult.pollutants.o3 }} μg/m³</el-descriptions-item>
-            <el-descriptions-item label="NO2">{{ predictionResult.pollutants.no2 }} μg/m³</el-descriptions-item>
-            <el-descriptions-item label="SO2">{{ predictionResult.pollutants.so2 }} μg/m³</el-descriptions-item>
-            <el-descriptions-item label="CO">{{ predictionResult.pollutants.co }} mg/m³</el-descriptions-item>
-          </el-descriptions>
+        <!-- 健康建议展示区域 -->
+        <div class="advice-panel">
+          <h3>健康建议</h3>
+          <el-alert
+            :title="predictionResult.health_advice"
+            :type="alertType"
+            :closable="false"
+            show-icon
+          />
+          
+          <div class="pollutants-info">
+            <h4>主要污染物数据</h4>
+            <el-descriptions :column="3" border>
+              <el-descriptions-item label="PM2.5">{{ predictionResult.pollutants.pm25 }} μg/m³</el-descriptions-item>
+              <el-descriptions-item label="PM10">{{ predictionResult.pollutants.pm10 }} μg/m³</el-descriptions-item>
+              <el-descriptions-item label="O3">{{ predictionResult.pollutants.o3 }} μg/m³</el-descriptions-item>
+              <el-descriptions-item label="NO2">{{ predictionResult.pollutants.no2 }} μg/m³</el-descriptions-item>
+              <el-descriptions-item label="SO2">{{ predictionResult.pollutants.so2 }} μg/m³</el-descriptions-item>
+              <el-descriptions-item label="CO">{{ predictionResult.pollutants.co }} mg/m³</el-descriptions-item>
+            </el-descriptions>
+          </div>
         </div>
       </div>
     </div>
@@ -307,20 +307,14 @@ export default defineComponent({
   gap: 20px;
 }
 
-.image-aqi-wrapper {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
+.info-row {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 20px;
-  position: relative;
-}
-
-.aqi-panel-wrapper {
-  flex: 0 0 320px;
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-start;
-  min-width: 260px;
+  
+  @media (min-width: 768px) {
+    grid-template-columns: 1fr 2fr;
+  }
 }
 
 .aqi-panel {
@@ -329,8 +323,6 @@ export default defineComponent({
   padding: 20px;
   text-align: center;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  width: 100%;
-  max-width: 320px;
   
   h3 {
     margin-top: 0;
@@ -385,7 +377,7 @@ export default defineComponent({
   border-radius: 8px;
   padding: 20px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  flex: 1 1 0%;
+  width: 100%;
   
   h3 {
     margin-top: 0;
@@ -394,7 +386,7 @@ export default defineComponent({
   
   .image-container {
     width: 100%;
-    height: 300px;
+    height: 450px; /* 增加高度 */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -426,7 +418,6 @@ export default defineComponent({
   border-radius: 8px;
   padding: 20px;
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  grid-column: span 2;
   
   h3, h4 {
     margin-top: 0;
@@ -435,18 +426,6 @@ export default defineComponent({
   
   .pollutants-info {
     margin-top: 20px;
-  }
-}
-
-@media (max-width: 900px) {
-  .image-aqi-wrapper {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .aqi-panel-wrapper {
-    justify-content: center;
-    min-width: 0;
-    margin-bottom: 10px;
   }
 }
 </style> 
