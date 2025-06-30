@@ -61,7 +61,7 @@ class AirQualityDataProcessor:
         
         # 污染物映射
         self.pollutants = {
-            'pm2.5_24h': 'PM2.5_24h',
+            'pm25_24h': 'PM2.5_24h',
             'pm10_24h': 'PM10_24h',
             'o3_8h': 'O3_8h',
             'o3_1h': 'O3_1h',
@@ -286,10 +286,21 @@ class AirQualityDataProcessor:
         
         # 先将NOAA数据和mapping_df左连接，获得OPENAQ_ID
         nooa_with_openaq = pd.merge(nooa_df_merged, mapping_bridge, on='STATION', how='left')
+        # debug join
+        print("nooa_with_openaq列名:", list(nooa_with_openaq.columns))
+        print("nooa_with_openaq:", nooa_with_openaq[["STATION", "OPENAQ_ID", "date"]])
+        print("self.merged_df列名:", list(self.merged_df.columns))
+        print("self.merged_df:", self.merged_df[["OPENAQ_ID", "AQI", "date"]])
         
-        # 按OPENAQ_ID和date两列进行左连接，保留NOAA数据的所有行
-        self.final_merged = pd.merge(nooa_with_openaq, self.merged_df, left_on=['OPENAQ_ID', 'date'], 
-        right_on=['location_id', 'date'], how='inner', suffixes=('_noaa', '_openaq'))
+        # 确保两个表的 date 列格式一致
+        nooa_with_openaq['date'] = pd.to_datetime(nooa_with_openaq['date']).dt.strftime('%Y-%m-%d')
+        self.merged_df['date'] = pd.to_datetime(self.merged_df['date']).dt.strftime('%Y-%m-%d')
+        
+        # 然后再进行合并
+        self.final_merged = pd.merge(nooa_with_openaq, self.merged_df, 
+                                    on=['OPENAQ_ID', 'date'], 
+                                    how='inner', 
+                                    suffixes=('_noaa', '_openaq'))
         
         # 保存最终合并结果
         final_merged_file = f"{self.output_dir}/nooa_openaq_merged.csv"
@@ -357,6 +368,7 @@ if __name__ == '__main__':
     start_date = "2016-01-01"
     end_date = "2022-06-08"
     
+
     # 预定义的站点ID列表
     sampled_stations = ["72384023155", "72389093193", "72389693144", "72494693232",
                         "72287493134", "72278023183", "70261026411", "41640099999"]

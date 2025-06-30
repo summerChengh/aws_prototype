@@ -298,71 +298,40 @@ class OpenAQDataFetcher:
         
         # 加载数据
         processor.df = df.copy()
-        
-        try:
-            # 处理数据流程
-            processed_df, features_df = processor.process_data_pipeline(df)
-            return processed_df, features_df, processor
-        except Exception as e:
-            logger.error(f"使用OpenAQProcessor处理数据时出错: {e}")
             
-            # 尝试手动处理
+        try:
+            # 分析参数
+            processor.analyze_parameters()
+            # debug
+            print("processor.processed_df的所有列名:", processor.df.columns.tolist())
+
+            # 尝试填充缺失的小时
             try:
-                # 解析datetime列
-                logger.info("尝试手动解析datetime列...")
-                if 'datetime' in processor.df.columns:
-                    # 确保datetime列是字符串类型
-                    processor.df['datetime'] = processor.df['datetime'].astype(str)
-                    
-                    # 标准化格式
-                    processor.df['datetime'] = processor.df['datetime'].str.replace(' ', 'T')
-                    
-                    # 移除时区信息
-                    timezone_pattern = r'([+-]\d{2}:?\d{2}|\.\d+|Z)$'
-                    processor.df['datetime'] = processor.df['datetime'].str.replace(timezone_pattern, '', regex=True)
-                    
-                    # 手动提取日期和小时
-                    processor.df['date'] = pd.to_datetime(processor.df['datetime'].str.split('T').str[0]).dt.date
-                    
-                    # 提取小时
-                    processor.df['hour'] = pd.to_numeric(
-                        processor.df['datetime'].str.split('T').str[1].str.split(':').str[0],
-                        errors='coerce'
-                    )
-                    
-                    logger.info("手动解析datetime列完成")
-                else:
-                    logger.error("数据中没有datetime列，无法解析")
-                    return None, None, None
-                
-                # 分析参数
-                processor.analyze_parameters()
-                
-                # 尝试填充缺失的小时
-                try:
-                    processor.fill_missing_hours()
-                except Exception as e2:
-                    logger.error(f"填充缺失小时时出错: {e2}")
-                    logger.info("跳过填充缺失小时步骤...")
-                
-                # 获取处理后的数据
-                processed_df = processor.get_processed_data()
-                logger.info(f"处理后数据形状: {processed_df.shape}")
-                
-                # 尝试计算滑动窗口特征
-                features_df = None
-                try:
-                    processor.calculate_sliding_window_features()
-                    features_df = processor.get_aggregated_data()
-                    logger.info(f"特征数据形状: {features_df.shape if features_df is not None else 'None'}")
-                except Exception as e3:
-                    logger.error(f"计算滑动窗口特征时出错: {e3}")
-                
-                return processed_df, features_df, processor
-                
+                processor.fill_missing_hours()
             except Exception as e2:
-                logger.error(f"手动处理数据也失败: {e2}")
-                return None, None, None
+                logger.error(f"填充缺失小时时出错: {e2}")
+                logger.info("跳过填充缺失小时步骤...")
+            
+            # debug
+            print("processor.processed_df的所有列名:", processor.processed_df.columns.tolist())
+            # 获取处理后的数据
+            processed_df = processor.get_processed_data()
+            logger.info(f"处理后数据形状: {processed_df.shape}")
+            
+            # 尝试计算滑动窗口特征
+            features_df = None
+            try:
+                processor.calculate_sliding_window_features()
+                features_df = processor.get_aggregated_data()
+                logger.info(f"特征数据形状: {features_df.shape if features_df is not None else 'None'}")
+            except Exception as e3:
+                logger.error(f"计算滑动窗口特征时出错: {e3}")
+            
+            return processed_df, features_df, processor
+            
+        except Exception as e2:
+            logger.error(f"手动处理数据也失败: {e2}")
+            return None, None, None
     
     def process_aq_data_and_extract_features(
         self, 

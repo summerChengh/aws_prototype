@@ -31,7 +31,7 @@ class OpenAQProcessor:
         self.processed_df = None
         self.location_col = 'location_id'
         self.aggregated_df = None
-        self.parameters_dict ={24: ["pm2.5", "pm10", "SO2"], 8: ["o3", "co"], 1: ["o3", "so2", "no2"]}
+        self.parameters_dict ={24: ["pm25", "pm10", "so2"], 8: ["o3", "co"], 1: ["o3", "so2", "no2"]}
         
         # 默认的滑动窗口大小（小时）
         self.window_sizes = [3, 6, 12, 24, 48, 72]
@@ -402,7 +402,10 @@ class OpenAQProcessor:
                         curr_min_periods = min_periods
                         if curr_min_periods is None:
                             curr_min_periods = max(1, window_size // 2)  # 默认为窗口大小的一半（至少为1）
-                        
+
+                        # 将小于0的值替换为np.nan
+                        subset.loc[subset[value_column] < 0, value_column] = np.nan
+
                         # 计算滑动窗口平均值
                         subset['sliding_avg'] = subset[value_column].rolling(
                             window=window_size, 
