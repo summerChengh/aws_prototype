@@ -145,7 +145,8 @@ class AirQualityDataProcessor:
         station_location_file = f"{self.output_dir}/noaa-openaq-mapping.csv"
         
         if not os.path.exists(station_location_file):
-            self.noaa_fetcher.get_openaq_stations(stations_file, station_location_file, api_key=self.api_key)
+            self.noaa_fetcher.get_openaq_stations(stations_file, station_location_file, api_key=self.api_key, 
+            radius_m=8050)
             logger.info(f"已生成NOAA到OpenAQ的映射关系: {station_location_file}")
         else:
             logger.info(f"映射关系文件已存在: {station_location_file}")
@@ -278,7 +279,8 @@ class AirQualityDataProcessor:
         # 将DATE列重命名为date
         if 'DATE' in nooa_df_merged.columns:
             nooa_df_merged.rename(columns={'DATE': 'date'}, inplace=True)
-
+        
+        
         # 只保留mapping_df中有用的两列
         mapping_bridge = self.mapping_df[['STATION', 'OPENAQ_ID']].dropna()
         
@@ -286,7 +288,8 @@ class AirQualityDataProcessor:
         nooa_with_openaq = pd.merge(nooa_df_merged, mapping_bridge, on='STATION', how='left')
         
         # 按OPENAQ_ID和date两列进行左连接，保留NOAA数据的所有行
-        self.final_merged = pd.merge(nooa_with_openaq, self.merged_df, on=['OPENAQ_ID', 'date'], how='left', suffixes=('_nooa', '_openaq'))
+        self.final_merged = pd.merge(nooa_with_openaq, self.merged_df, left_on=['OPENAQ_ID', 'date'], 
+        right_on=['location_id', 'date'], how='inner', suffixes=('_noaa', '_openaq'))
         
         # 保存最终合并结果
         final_merged_file = f"{self.output_dir}/nooa_openaq_merged.csv"
@@ -351,13 +354,12 @@ def main():
 if __name__ == '__main__':
     # 示例用法
     # 如果直接运行此脚本，使用默认参数
-    start_date = "2016-12-01"
-    end_date = "2016-12-30"
+    start_date = "2016-01-01"
+    end_date = "2022-06-08"
     
     # 预定义的站点ID列表
     sampled_stations = ["72384023155", "72389093193", "72389693144", "72494693232",
                         "72287493134", "72278023183", "70261026411", "41640099999"]
-    sampled_stations = ["72384023155"]
 
-    processor = AirQualityDataProcessor(start_date, end_date)
+    processor = AirQualityDataProcessor(start_date, end_date, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
     processor.run_full_pipeline(sampled_stations)

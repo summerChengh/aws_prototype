@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 def load_csv_file(file_path: str) -> Optional[pd.DataFrame]:
     """
     加载CSV文件，支持.csv和.csv.gz格式
+    对于.gz文件，如果存在重复列名，丢弃其中值全为空的列
     
     参数:
     file_path (str): CSV文件路径
@@ -25,10 +26,51 @@ def load_csv_file(file_path: str) -> Optional[pd.DataFrame]:
     """
     try:
         if file_path.endswith('.gz'):
+            # 首先读取列名
             with gzip.open(file_path, 'rt') as f:
-                df = pd.read_csv(f)
+                header = pd.read_csv(f, nrows=0)
+                column_names = header.columns.tolist()
+            
+            # 检查是否有重复列名
+            duplicate_columns = [col for col in column_names if column_names.count(col) > 1]
+            
+            if duplicate_columns:
+                logger.info(f"文件 {file_path} 包含重复列名: {set(duplicate_columns)}")
+                
+                # 使用低级别的读取方式处理重复列
+                with gzip.open(file_path, 'rt') as f:
+                    # 使用mangle_dupe_cols=True来自动重命名重复列
+                    df = pd.read_csv(f, mangle_dupe_cols=True)
+                
+                # 找出重复列（会被自动重命名为name.1, name.2等）
+                renamed_duplicates = [col for col in df.columns if '.' in col and col.split('.')[0] in column_names]
+                
+                # 检查这些重复列是否全为空
+                for col in renamed_duplicates:
+                    if df[col].isna().all():
+                        logger.info(f"删除全为空的重复列: {col}")
+                        df = df.drop(columns=[col])
+                    else:
+                        base_col = col.split('.')[0]
+                        # 如果原始列全为空而重命名列有值，则替换原始列
+                        if base_col in df.columns and df[base_col].isna().all():
+                            logger.info(f"原始列 {base_col} 全为空，用 {col} 替换")
+                            df[base_col] = df[col]
+                            df = df.drop(columns=[col])
+            else:
+                # 如果没有重复列，正常读取
+                with gzip.open(file_path, 'rt') as f:
+                    df = pd.read_csv(f)
         else:
+            # 非gz文件正常读取
             df = pd.read_csv(file_path)
+        
+        # 删除所有全为空的列
+        null_columns = [col for col in df.columns if df[col].isna().all()]
+        if null_columns:
+            logger.info(f"删除全为空的列: {null_columns}")
+            df = df.drop(columns=null_columns)
+        
         logger.info(f"成功加载文件: {file_path}, 形状: {df.shape}")
         return df
     except Exception as e:
@@ -64,6 +106,21 @@ def find_data_files(data_dir: str, location_id: str, start_date: Optional[str] =
     
     # 解析日期范围
     try:
+        # 如果日期格式为"YYYY-MM-DD"或"YYYY-MM-DD "，则转换为"YYYYMMDD"
+        if start_date:
+            start_date = start_date.strip()
+            if '-' in start_date:
+                try:
+                    start_date = datetime.strptime(start_date, '%Y-%m-%d').strftime('%Y%m%d')
+                except ValueError:
+                    pass  # 如果不是该格式则跳过
+        if end_date:
+            end_date = end_date.strip()
+            if '-' in end_date:
+                try:
+                    end_date = datetime.strptime(end_date, '%Y-%m-%d').strftime('%Y%m%d')
+                except ValueError:
+                    pass
         start_dt = datetime.strptime(start_date, '%Y%m%d')
         end_dt = datetime.strptime(end_date, '%Y%m%d')
     except ValueError as e:
@@ -118,7 +175,7 @@ def find_data_files(data_dir: str, location_id: str, start_date: Optional[str] =
 
 def preprocess_datetime_column(df: pd.DataFrame, datetime_col: str = 'datetime') -> pd.DataFrame:
     """
-    预处理DataFrame中的datetime列
+    预处理DataFrame中的datetime列，兼容混合时区和异常值
     
     参数:
     df (pd.DataFrame): 输入数据
@@ -130,25 +187,44 @@ def preprocess_datetime_column(df: pd.DataFrame, datetime_col: str = 'datetime')
     if df is None or df.empty:
         logger.warning("输入数据为空，无法处理datetime列")
         return df
-    
+
     if datetime_col not in df.columns:
         logger.warning(f"数据中没有{datetime_col}列，无法处理")
         return df
-    
+
     try:
-        # 确保datetime列是datetime类型
-        df[datetime_col] = pd.to_datetime(df[datetime_col], errors='coerce')
-        
-        # 提取日期列
-        df['date'] = df[datetime_col].dt.date
-        
-        # 提取小时列
-        df['hour'] = df[datetime_col].dt.hour
-        
+        # 1. 过滤掉明显无效的值
+        df = df[df[datetime_col].notna()]
+        df = df[df[datetime_col] != 'Na']
+
+        # 2. 转为字符串，标准化格式
+        df[datetime_col] = df[datetime_col].astype(str).str.replace(' ', 'T')
+
+        # 3. 解析为datetime，强制utc，遇到异常填NaT
+        df[datetime_col] = pd.to_datetime(df[datetime_col], errors='coerce', utc=True)
+
+        # 4. 丢弃无法解析的行
+        df = df.dropna(subset=[datetime_col])
+
+        # 5. 只有在类型正确时才用.dt
+        if pd.api.types.is_datetime64_any_dtype(df[datetime_col]):
+            df['date'] = df[datetime_col].dt.date
+            df['hour'] = df[datetime_col].dt.hour
+        else:
+            logger.error(f"{datetime_col}列不是datetimelike类型，无法提取date和hour")
+            df['date'] = None
+            df['hour'] = None
+
         logger.info(f"成功处理{datetime_col}列，提取了date和hour")
         return df
+
     except Exception as e:
         logger.error(f"处理{datetime_col}列时出错: {e}")
+        # 兜底：返回原始df并补充空列
+        if 'date' not in df.columns:
+            df['date'] = None
+        if 'hour' not in df.columns:
+            df['hour'] = None
         return df
 
 def sort_by_datetime(df: pd.DataFrame, datetime_col: str = 'datetime') -> pd.DataFrame:
@@ -268,18 +344,29 @@ def perform_time_resampling(df: pd.DataFrame, time_freq: str = '1H',
 
 def get_years_from_time_range(start_date: str, end_date: str) -> List[int]:
     """
-    从日期范围中获取所有年份
+    从日期范围中获取所有年份，支持两种日期格式：
+    1. 'YYYY-MM-DD'
+    2. 'YYYYMMDD'
     
     参数:
-    start_date (str): 开始日期，格式为'YYYY-MM-DD'
-    end_date (str): 结束日期，格式为'YYYY-MM-DD'
+    start_date (str): 开始日期
+    end_date (str): 结束日期
     
     返回:
     List[int]: 年份列表
     """
     try:
-        start_year = int(start_date.split('-')[0])
-        end_year = int(end_date.split('-')[0])
+        # 处理两种可能的日期格式
+        if '-' in start_date:
+            start_year = int(start_date.split('-')[0])
+        else:
+            start_year = int(start_date[:4])
+            
+        if '-' in end_date:
+            end_year = int(end_date.split('-')[0])
+        else:
+            end_year = int(end_date[:4])
+            
         return list(range(start_year, end_year + 1))
     except (ValueError, IndexError) as e:
         logger.error(f"解析日期范围失败: {e}")

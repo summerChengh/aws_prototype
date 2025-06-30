@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, date
 from typing import List, Dict, Optional, Union, Any, Tuple, Set
 
 # 导入工具函数
-from utils import load_csv_file, find_data_files, preprocess_datetime_column, sort_by_datetime, load_and_merge_data_files, perform_time_resampling
+from utils import load_csv_file, find_data_files, preprocess_datetime_column, sort_by_datetime, load_and_merge_data_files, perform_time_resampling, get_years_from_time_range
 
 # 导入OpenAQProcessor类
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -404,16 +404,17 @@ class OpenAQDataFetcher:
         
         if not csv_files and download_missing and start_date and end_date:
             logger.info(f"未找到匹配的CSV文件，尝试从AWS S3下载...")
-            download_success = self.download_data_from_s3(location_id, start_date, end_date)
-            
-            if download_success:
-                csv_files = find_data_files(self.data_dir, location_id, start_date, end_date)
-                if not csv_files:
-                    logger.warning("下载后仍未找到匹配的CSV文件，可能S3上没有该日期范围的数据")
-                    return None, None, None
-            else:
-                logger.error("从AWS S3下载数据失败")
+            years = get_years_from_time_range(start_date, end_date)
+            file_cnt = 0
+            for year in years:
+                download_success, cnt = self.fetch_data_from_s3_by_year(location_id, year=year, check_existing=False)
+                file_cnt += cnt
+            logger.info(f"下载{file_cnt}个文件")
+            csv_files = find_data_files(self.data_dir, location_id, start_date, end_date)
+            if not csv_files:
+                logger.warning("下载后仍未找到匹配的CSV文件，可能S3上没有该日期范围的数据")
                 return None, None, None
+
         elif not csv_files:
             logger.warning(f"未找到匹配的CSV文件")
             return None, None, None
@@ -427,10 +428,10 @@ class OpenAQDataFetcher:
         
         # 步骤4: 预处理datetime列
         merged_df = preprocess_datetime_column(merged_df)
-        
+
         # 步骤5: 按datetime排序
         merged_df = sort_by_datetime(merged_df)
-        
+    
         # 保存合并后的原始数据
         raw_data_file = os.path.join(output_dir, f"raw_data_{file_prefix}.csv")
         merged_df.to_csv(raw_data_file, index=False)
