@@ -286,11 +286,6 @@ class AirQualityDataProcessor:
         
         # 先将NOAA数据和mapping_df左连接，获得OPENAQ_ID
         nooa_with_openaq = pd.merge(nooa_df_merged, mapping_bridge, on='STATION', how='left')
-        # debug join
-        print("nooa_with_openaq列名:", list(nooa_with_openaq.columns))
-        print("nooa_with_openaq:", nooa_with_openaq[["STATION", "OPENAQ_ID", "date"]])
-        print("self.merged_df列名:", list(self.merged_df.columns))
-        print("self.merged_df:", self.merged_df[["OPENAQ_ID", "AQI", "date"]])
         
         # 确保两个表的 date 列格式一致
         nooa_with_openaq['date'] = pd.to_datetime(nooa_with_openaq['date']).dt.strftime('%Y-%m-%d')
