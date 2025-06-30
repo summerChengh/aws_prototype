@@ -7,6 +7,7 @@ from autogluon.features.generators import AutoMLPipelineFeatureGenerator
 import matplotlib.pyplot as plt
 import logging
 from pathlib import Path
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,6 +19,7 @@ class AirQualityPredictor:
                  input_file=None, 
                  output_dir=None,
                  results_dir=None,
+                 deploy_dir=None,
                  context_length=14,
                  prediction_length=1,
                  presets="high_quality",
@@ -30,6 +32,7 @@ class AirQualityPredictor:
         self.model_version = datetime.now().strftime("%Y%m%d%H%M%S")
         self.output_dir = output_dir or f"./models/automl/{self.model_version}/{os.path.basename(data_dir)}"
         self.results_dir = results_dir or f"./data/results/automl/{self.model_version}/{os.path.basename(data_dir)}/"
+        self.deploy_dir = deploy_dir or "./models/deploy"
         
         # 创建目录
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
@@ -228,12 +231,6 @@ class AirQualityPredictor:
             # 划分数据
             train_data, eval_data = ts_df.train_test_split(self.prediction_length)
             
-            # 保存数据
-            pollutant_dir = os.path.join(self.data_dir, target)
-            os.makedirs(pollutant_dir, exist_ok=True)
-            train_data.to_csv(os.path.join(pollutant_dir, "timeseries_train.csv"), index=True)
-            eval_data.to_csv(os.path.join(pollutant_dir, "timeseries_test.csv"), index=True)
-            
             # 获取针对该污染物的特定超参数，如果有的话
             pollutant_hyperparams = model_configs.get(target, None) 
             
@@ -253,7 +250,7 @@ class AirQualityPredictor:
             # 保存模型信息
             self._save_model_info(predictor, target)
 
-            best_model_path = os.path.join(self.output_dir, target, predictor.model_best)
+            self.save_best_model_for_deployment(predictor, target_col=target, performance=performance)
         
         # 汇总结果
         self._summarize_results()
@@ -281,32 +278,38 @@ class AirQualityPredictor:
             summary = pd.DataFrame(self.results).T
             summary.to_csv(os.path.join(self.results_dir, "summary_performance.csv"))
 
-    def save_best_model_for_deployment(self, target_col, version="v1"):
+    def save_best_model_for_deployment(self, predictor, target_col, performance={}):
         """保存最优模型用于线上部署
-        
-        Args:
-            target_col: 目标污染物
-            version: 模型版本号
         """
-        # 确保模型已训练
-        model_path = os.path.join(self.output_dir, target_col)
-        if not os.path.exists(model_path):
-            logger.error(f"模型 {target_col} 不存在，请先训练模型")
-            return False
-        
         # 创建部署目录
-        deploy_dir = os.path.join("./models/deploy", target_col, version)
+        deploy_dir = self.deploy_dir
+        deploy_model_dir = os.path.join(deploy_dir, target_col, self.model_version)
         Path(deploy_dir).mkdir(parents=True, exist_ok=True)
+        Path(deploy_model_dir).mkdir(parents=True, exist_ok=True)
         
         try:
-            # 1. 加载模型
-            predictor = TimeSeriesPredictor.load(model_path)
+            model_path = os.path.join(self.output_dir, target_col)
+            if not os.path.exists(model_path):
+                logger.error(f"模型 {target_col} 不存在，请先训练模型")
+                return False
             
+            # 1. 将model_path下的所有文件和子目录拷贝到deploy_model_dir
+            for item in os.listdir(model_path):
+                s = os.path.join(model_path, item)
+                d = os.path.join(deploy_model_dir, item)
+                if item == "logs":
+                    continue
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(s, d)
+
             # 2. 保存模型元数据
             metadata = {
                 "model_name": target_col,
-                "version": version,
+                "version": self.model_version,
                 "created_at": datetime.now().isoformat(),
+                "context_length": self.context_length,
                 "prediction_length": self.prediction_length,
                 "freq": "D",
                 "features": {
@@ -314,17 +317,14 @@ class AirQualityPredictor:
                     "dynamic": self.dynamic_features
                 },
                 "best_model": predictor.model_best,
-                "performance": predictor.evaluate(predictor.val_data) if hasattr(predictor, "val_data") else None
+                "performance": performance
             }
             
             with open(os.path.join(deploy_dir, "metadata.json"), "w") as f:
                 import json
                 json.dump(metadata, f, indent=2)
             
-            # 3. 保存模型文件
-            predictor.save(os.path.join(deploy_dir, "model"))
-            
-            # 4. 保存特征处理逻辑
+            # 3. 保存特征处理逻辑
             import joblib
             joblib.dump({
                 "static_features": self.static_features,
@@ -368,8 +368,9 @@ if __name__ == "__main__":
    ''' 
     # 为不同污染物配置不同模型
     custom_configs = {
-        "AQI": {'DirectTabular':{}, 'DeepAR': {'learning_rate': 0.01}},
+        "AQI": {'DirectTabular':{}, 'DeepAR': {}},
     }
+
 
     predictor.train_all_models(model_configs=custom_configs)
     
