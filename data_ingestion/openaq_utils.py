@@ -1,11 +1,5 @@
 import requests
-import pandas as pd
-import numpy as np
-import argparse
-import os
-from typing import List, Dict, Optional, Union, Any
-from utils import get_years_from_time_range
-from datetime import datetime, timedelta
+from typing import Dict, Optional, Any
 
 
 def fetch_openaq_location_ids(lat, lng, api_key=None, radius_m=10000, limit=10):

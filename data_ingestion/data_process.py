@@ -41,7 +41,7 @@ class AirQualityDataProcessor:
         # 设置输出目录
         if output_dir is None:
             self.output_dir = f"./data/processed/{self.start_date_openaq}_{self.end_date_openaq}"
-else:
+        else:
             self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -64,14 +64,14 @@ else:
         # 污染物映射
         self.pollutants = {
             'pm25_24h': 'PM2.5_24h',
-    'pm10_24h': 'PM10_24h',
-    'o3_8h': 'O3_8h',
-    'o3_1h': 'O3_1h',
-    'co_8h': 'CO_8h',
-    'so2_1h': 'SO2_1h',
-    'so2_24h': 'SO2_24h',
-    'no2_1h': 'NO2_1h'
-}
+            'pm10_24h': 'PM10_24h',
+            'o3_8h': 'O3_8h',
+            'o3_1h': 'O3_1h',
+            'co_8h': 'CO_8h',
+            'so2_1h': 'SO2_1h',
+            'so2_24h': 'SO2_24h',
+            'no2_1h': 'NO2_1h'
+        }
 
     def get_noaa_data(self, station_ids: List[str] = None, sample_rate: float = 0.001) -> pd.DataFrame:
         """
@@ -243,19 +243,19 @@ else:
         返回:
         Tuple[Optional[float], Optional[str], Dict]: (AQI值, 主要污染物, 单个污染物AQI)
         """
-    # 构建浓度字典
-    concentrations = {}
+        # 构建浓度字典
+        concentrations = {}
         for col, pollutant_type in self.pollutants.items():
-        if col in row.index and pd.notnull(row[col]):
-            concentrations[pollutant_type] = row[col]
+            if col in row.index and pd.notnull(row[col]):
+                concentrations[pollutant_type] = row[col]
     
-    # 如果没有有效的污染物数据，返回None
-    if not concentrations:
-        return None, None, {}
+        # 如果没有有效的污染物数据，返回None
+        if not concentrations:
+            return None, None, {}
     
-    # 计算综合AQI和单个污染物AQI
+        # 计算综合AQI和单个污染物AQI
         overall_aqi, main_pollutant, single_aqis = self.calculator.calculate_overall_aqi(concentrations)
-    return overall_aqi, main_pollutant, single_aqis
+        return overall_aqi, main_pollutant, single_aqis
 
     def merge_noaa_openaq_data(self) -> pd.DataFrame:
         """
@@ -272,22 +272,22 @@ else:
             logger.warning("OpenAQ数据未处理，请先调用process_openaq_data")
             return None
 
-# 确保字段名一致
+        # 确保字段名一致
         nooa_df_merged = self.nooa_df.copy()
-if 'STATION' not in nooa_df_merged.columns:
+        if 'STATION' not in nooa_df_merged.columns:
             # 有些NOAA数据可能用'station'小写
-    if 'station' in nooa_df_merged.columns:
-        nooa_df_merged.rename(columns={'station': 'STATION'}, inplace=True)
+            if 'station' in nooa_df_merged.columns:
+                nooa_df_merged.rename(columns={'station': 'STATION'}, inplace=True)
 
         # 将DATE列重命名为date
         if 'DATE' in nooa_df_merged.columns:
             nooa_df_merged.rename(columns={'DATE': 'date'}, inplace=True)
 
-# 只保留mapping_df中有用的两列
+        # 只保留mapping_df中有用的两列
         mapping_bridge = self.mapping_df[['STATION', 'OPENAQ_ID']].dropna()
 
         # 先将NOAA数据和mapping_df左连接，获得OPENAQ_ID
-nooa_with_openaq = pd.merge(nooa_df_merged, mapping_bridge, on='STATION', how='left')
+        nooa_with_openaq = pd.merge(nooa_df_merged, mapping_bridge, on='STATION', how='left')
 
         # 确保两个表的 date 列格式一致
         nooa_with_openaq['date'] = pd.to_datetime(nooa_with_openaq['date']).dt.strftime('%Y-%m-%d')
@@ -299,7 +299,7 @@ nooa_with_openaq = pd.merge(nooa_df_merged, mapping_bridge, on='STATION', how='l
                                      how='inner',
                                      suffixes=('_noaa', '_openaq'))
 
-# 保存最终合并结果
+        # 保存最终合并结果
         final_merged_file = f"{self.output_dir}/nooa_openaq_merged.csv"
         self.final_merged.to_csv(final_merged_file, index=False)
         logger.info(f"NOAA与OpenAQ数据已左连接并保存到: {final_merged_file}")
@@ -375,18 +375,11 @@ def main():
 if __name__ == '__main__':
     api_key = os.getenv("OPENAQ_API_KEY")
     if not api_key:
-       raise RuntimeError("API key not set in environment variable OPENAQ_API_KEY")
+        raise RuntimeError("API key not set in environment variable OPENAQ_API_KEY")
     # 示例用法
     # 如果直接运行此脚本，使用默认参数
     start_date = "2016-01-01"
     end_date = "2025-06-29"
-    # 根据end_date和n，自动设置start_date为end_date往前数n天
-    from datetime import datetime, timedelta
-
-    n = 14  # 例如，往前数14天
-    end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
-    start_date_obj = end_date_obj - timedelta(days=(n - 1))
-    start_date = start_date_obj.strftime("%Y-%m-%d")
 
     # 预定义的站点ID列表
     sampled_stations = ["72384023155", "72389093193", "72389693144", "72494693232",
