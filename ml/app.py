@@ -11,12 +11,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Body
 from pydantic import BaseModel, Field
 import uvicorn
-
-# 导入模型推理相关函数
-from ml.model_inference import (
-    load_model, predict_aqi, get_historical_data, 
-    calculate_trend, POLLUTANT_MODELS, DEFAULT_MODEL_DIR
-)
+from model_inference import DeployedModelInference
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -37,9 +32,10 @@ async def startup_load_models():
     """启动时加载所有模型"""
     global models
     logger.info("Loading models on startup")
-    for pollutant in POLLUTANT_MODELS:
-        models[pollutant] = load_model(DEFAULT_MODEL_DIR, pollutant)
-    logger.info(f"Loaded {len(models)} models")
+    predictor = DeployedModelInference()
+    predictor.load_model()
+    models["default"] = predictor
+    
 
 # 定义API数据模型
 class PredictionRequest(BaseModel):
@@ -52,8 +48,6 @@ class PredictionResponse(BaseModel):
     city_id: str
     prediction_date: str
     predictions: Dict[str, float]
-    trends: Dict[str, float]
-    confidence: Dict[str, Dict[str, float]]
     
 class HealthResponse(BaseModel):
     status: str
@@ -61,7 +55,6 @@ class HealthResponse(BaseModel):
     available_pollutants: List[str]
     timestamp: str
 
-   
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(request: PredictionRequest):
@@ -74,62 +67,30 @@ async def predict(request: PredictionRequest):
             # 默认预测明天
             prediction_date = datetime.now() + timedelta(days=1)
         
+        predictor = models.get("default")
+
+        context_len = predictor.get_context_len()
+        if isinstance(context_len, str) and context_len.isdigit():
+            context_len = int(context_len)
+        else:
+            context_len = 14
+
         # 获取历史数据
         historical_data = get_historical_data(
             city_id=request.city_id,
             end_date=prediction_date - timedelta(days=1),  # 使用到预测日期前一天的数据
-            days=14  # 使用14天的历史数据
+            days=context_len,  # 使用context_len天的历史数据
+            api_key=api_key
         )
         
         if historical_data.empty:
             raise HTTPException(status_code=404, detail=f"No historical data found for city {request.city_id}")
         
-        # 确定要预测的污染物
-        pollutants_to_predict = request.pollutants or POLLUTANT_MODELS
-        
         # 存储预测结果
         predictions = {}
-        trends = {}
-        confidence = {}
         
-        # 为每个污染物进行预测
-        for pollutant in pollutants_to_predict:
-            if pollutant not in models:
-                logger.warning(f"Model for {pollutant} not found, skipping")
-                continue
-                
-            # 准备特征
-            features = {}
-            if request.features:
-                features.update(request.features)
-                
-            # 从历史数据中提取额外特征
-            if not historical_data.empty:
-                # 添加最近的气象数据
-                latest_data = historical_data.iloc[-1].to_dict()
-                for feature in ['TEMP', 'DEWP', 'SLP', 'VISIB', 'WDSP']:
-                    if feature in latest_data and feature not in features:
-                        features[feature] = latest_data[feature]
-                
-                # 添加日期相关特征
-                features['DAY_OF_YEAR'] = prediction_date.timetuple().tm_yday
-                features['MONTH'] = prediction_date.month
-                
-                # 计算趋势
-                if pollutant in historical_data.columns:
-                    trends[pollutant] = calculate_trend(historical_data[pollutant])
-            
-            # 进行预测
-            model = models[pollutant]
-            predicted_value = predict_aqi(model, features)
-            predictions[pollutant] = float(predicted_value)
-            
-            # 添加置信区间（模拟值，实际应从模型获取）
-            confidence[pollutant] = {
-                "lower_bound": max(0, predicted_value * 0.85),
-                "upper_bound": min(500, predicted_value * 1.15)
-            }
-        
+        predict_AQI = predictor.predict(historical_data, prediction_date, use_best_model=True)
+
         # 构建响应
         response = {
             "city_id": request.city_id,
