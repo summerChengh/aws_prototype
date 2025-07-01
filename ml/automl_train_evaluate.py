@@ -294,6 +294,20 @@ class AirQualityPredictor:
                 return False
             
             # 1. 将model_path下的所有文件和子目录拷贝到deploy_model_dir
+            if os.path.exists(deploy_model_dir):
+                for root, dirs, files in os.walk(deploy_model_dir, topdown=False):
+                    for name in files:
+                        file_path = os.path.join(root, name)
+                        try:
+                            os.remove(file_path)
+                        except Exception as e:
+                            logger.warning(f"无法删除文件 {file_path}: {e}")
+                    for name in dirs:
+                        dir_path = os.path.join(root, name)
+                        try:
+                            shutil.rmtree(dir_path)
+                        except Exception as e:
+                            logger.warning(f"无法删除目录 {dir_path}: {e}")
             for item in os.listdir(model_path):
                 s = os.path.join(model_path, item)
                 d = os.path.join(deploy_model_dir, item)
@@ -308,6 +322,7 @@ class AirQualityPredictor:
             metadata = {
                 "model_name": target_col,
                 "version": self.model_version,
+                "target_col": target_col,
                 "created_at": datetime.now().isoformat(),
                 "context_length": self.context_length,
                 "prediction_length": self.prediction_length,

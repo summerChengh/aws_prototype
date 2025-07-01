@@ -10,9 +10,10 @@ import numpy as np
 import json
 import joblib
 from datetime import datetime, timedelta
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from data_ingestion.data_process import AirQualityDataProcessor
-from model_utils import perform_feature_engineering
 from autogluon.timeseries import TimeSeriesPredictor, TimeSeriesDataFrame
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -144,45 +145,19 @@ class DeployedModelInference:
         self.version = None
         self.model_dir = None
         
-    def load_model(self, target_col: str, version: str = None) -> 'DeployedModelInference':
+    def load_model() -> 'DeployedModelInference':
         """
-        加载指定目标的模型，version为None时自动选择最新版本
-        
-        Args:
-            target_col: 目标污染物名称
-            version: 可选，模型版本号
+        加载指定模型
             
         Returns:
             self: 返回实例本身，支持链式调用
         """
-        self.target_col = target_col
-        deploy_base = os.path.join(self.base_deploy_dir, target_col)
         
-        if not os.path.exists(deploy_base):
-            raise FileNotFoundError(f"No deployed model found for {target_col}")
+        if not os.path.exists(self.base_deploy_dir):
+            raise FileNotFoundError(f"No deployed model found for {self.base_deploy_dir}")
         
-        # 获取所有版本并按时间排序
-        versions = sorted(os.listdir(deploy_base), reverse=True)
-        if not versions:
-            raise FileNotFoundError(f"No version found for {target_col} in deploy directory")
-        
-        # 如果未指定版本，使用最新版本
-        if version is None:
-            version = versions[0]
-        
-        self.version = version
-        self.model_dir = os.path.join(deploy_base, version)
-        model_path = os.path.join(self.model_dir, "model")
-        metadata_path = os.path.join(self.model_dir, "metadata.json")
-        feature_config_path = os.path.join(self.model_dir, "feature_config.joblib")
-        
-        # 检查必要文件是否存在
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model directory not found: {model_path}")
-        
-        # 加载模型
-        logger.info(f"Loading deployed model for {target_col}, version {version} from {self.model_dir}")
-        self.predictor = TimeSeriesPredictor.load(model_path)
+        metadata_path = os.path.join(self.base_deploy_dir, "metadata.json")
+        feature_config_path = os.path.join(self.base_deploy_dir, "feature_config.joblib")
         
         # 加载元数据
         if os.path.exists(metadata_path):
@@ -192,6 +167,20 @@ class DeployedModelInference:
             logger.warning(f"Metadata file not found: {metadata_path}")
             self.metadata = {}
         
+        # 从元数据获取模型基础信息
+        model_name = self.metadata["model_name"]
+        self.target_col = self.metadata["target_col"]
+        self.version = self.metadata["version"]
+        self.model_dir = os.path.join(self.base_deploy_dir, self.target_col, self.version)
+
+        # 检查必要文件是否存在
+        if not os.path.exists(self.model_dir):
+            raise FileNotFoundError(f"Model directory not found: {self.model_dir}")
+        
+        # 加载模型
+        logger.info(f"Loading deployed model for {target_col}, version {version} from {self.model_dir}")
+        self.predictor = TimeSeriesPredictor.load(self.model_dir)
+
         # 加载特征配置
         if os.path.exists(feature_config_path):
             self.feature_config = joblib.load(feature_config_path)
