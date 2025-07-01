@@ -575,6 +575,9 @@ class DeployedModelInference:
 
 
 if __name__=='__main__': 
+    api_key = os.getenv("OPENAQ_API_KEY")
+    if not api_key:
+       raise RuntimeError("API key not set in environment variable OPENAQ_API_KEY")
     predictor = DeployedModelInference()
     predictor.load_model()
     context_len = predictor.get_context_len()
@@ -584,7 +587,7 @@ if __name__=='__main__':
         logger.error(f"error context_len: {context_len}")
         sys.exit(-1)
     
-    df = get_historical_data(city_id="72384023155", end_date="2025-07-01", days=context_len, api_key="9b61af0e97dfc16d9b8032bc54dfc62e677518873508c68796b3745ccd19dd00")
+    df = get_historical_data(city_id="72384023155", end_date="2025-07-01", days=context_len, api_key=api_key)
     predict_AQI = predictor.predict(df, "2025-07-02", use_best_model=True)
     print(f"predict_AQI: {predict_AQI}")
     

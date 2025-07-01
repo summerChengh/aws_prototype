@@ -129,7 +129,6 @@ async def list_cities(limit: int = Query(10, ge=1, le=100)):
     return {"cities": sample_cities[:limit]}
 
 
-
 if __name__ == "__main__":
     # 运行服务
     uvicorn.run(app, host="0.0.0.0", port=8000)
